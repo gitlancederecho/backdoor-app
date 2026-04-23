@@ -5,6 +5,7 @@ enum StaffStatusFilter: Hashable { case all, active, inactive }
 
 struct StaffAdminView: View {
     @Bindable var adminVM: AdminViewModel
+    @Environment(AuthViewModel.self) private var auth
     @Environment(LanguageManager.self) private var lang
     @State private var editingStaff: Staff?
 
@@ -12,6 +13,12 @@ struct StaffAdminView: View {
     @State private var searchText: String = ""
     @State private var roleFilter: StaffRoleFilter = .all
     @State private var statusFilter: StaffStatusFilter = .all
+
+    // Edit mode + selection
+    @State private var editMode: EditMode = .inactive
+    @State private var selectedIds: Set<UUID> = []
+    @State private var showBulkDeactivateConfirm = false
+    @State private var showBulkActivateConfirm = false
 
     private var filteredStaff: [Staff] {
         let q = searchText.trimmingCharacters(in: .whitespaces)
@@ -42,40 +49,144 @@ struct StaffAdminView: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
             Divider().background(Color.bdBorder)
-            ScrollView {
-                LazyVStack(spacing: 8) {
-                    Text(tr("staff_signup_hint"))
-                        .font(.caption)
-                        .foregroundColor(.gray)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 16)
-                        .padding(.top, 4)
-
-                    ForEach(filteredStaff) { member in
-                        StaffRow(
-                            staff: member,
-                            onToggleRole: { Task { try? await adminVM.setRole(member, role: member.role == .admin ? .staff : .admin) } },
-                            onToggleActive: { Task { try? await adminVM.toggleActive(member) } },
-                            onEdit: { editingStaff = member }
-                        )
-                        .padding(.horizontal, 16)
-                    }
-                    Spacer().frame(height: 24)
-                }
-                .padding(.top, 12)
+            staffList
+            if editMode.isEditing, !effectiveSelection.isEmpty {
+                bulkActionBar
             }
         }
         .sheet(item: $editingStaff) { staff in
             EditStaffSheet(staff: staff, adminVM: adminVM)
                 .environment(lang)
         }
+        .alert(
+            tr("deactivate_staff_confirm"),
+            isPresented: $showBulkDeactivateConfirm,
+            presenting: effectiveSelection
+        ) { ids in
+            Button(String(format: tr("deactivate_n"), ids.count), role: .destructive) {
+                Task {
+                    await adminVM.bulkSetStaffActive(
+                        ids: ids, to: false, excludingSelf: auth.staff?.id
+                    )
+                    selectedIds = []
+                    editMode = .inactive
+                }
+            }
+            Button(tr("cancel"), role: .cancel) {}
+        } message: { ids in
+            Text(String(format: tr("deactivate_staff_message"), ids.count))
+        }
+        .alert(
+            tr("activate_staff_confirm"),
+            isPresented: $showBulkActivateConfirm,
+            presenting: effectiveSelection
+        ) { ids in
+            Button(String(format: tr("activate_n"), ids.count)) {
+                Task {
+                    await adminVM.bulkSetStaffActive(
+                        ids: ids, to: true, excludingSelf: auth.staff?.id
+                    )
+                    selectedIds = []
+                    editMode = .inactive
+                }
+            }
+            Button(tr("cancel"), role: .cancel) {}
+        } message: { ids in
+            Text(String(format: tr("activate_staff_message"), ids.count))
+        }
+    }
+
+    // MARK: - List
+
+    private var staffList: some View {
+        List(selection: $selectedIds) {
+            // Signup hint rides with the scroll, so filters at the
+            // top remain pinned.
+            Text(tr("staff_signup_hint"))
+                .font(.caption)
+                .foregroundColor(.gray)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 4, trailing: 16))
+                .selectionDisabled()
+
+            ForEach(filteredStaff) { member in
+                StaffRow(
+                    staff: member,
+                    isSelf: member.id == auth.staff?.id,
+                    isEditing: editMode.isEditing,
+                    onToggleRole: { Task { try? await adminVM.setRole(member, role: member.role == .admin ? .staff : .admin) } },
+                    onToggleActive: { Task { try? await adminVM.toggleActive(member) } },
+                    onEdit: { editingStaff = member }
+                )
+                .tag(member.id)
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+                .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+            }
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .background(Color.bgPrimary)
+        .environment(\.editMode, $editMode)
+    }
+
+    // MARK: - Bulk action bar
+
+    /// Selection excluding the caller's own row — the bulk actions
+    /// (especially Deactivate) can't target self, so we filter client-
+    /// side too for clear affordance labels.
+    private var effectiveSelection: [UUID] {
+        selectedIds.subtracting(auth.staff.map { [$0.id] } ?? []).map { $0 }
+    }
+
+    private var bulkActionBar: some View {
+        HStack(spacing: 12) {
+            Text(String(format: tr("selected_count"), effectiveSelection.count))
+                .font(.subheadline)
+                .foregroundColor(.white)
+            Spacer()
+            Button {
+                showBulkActivateConfirm = true
+            } label: {
+                Label(tr("activate"), systemImage: "checkmark.circle")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundColor(.bdAccent)
+            }
+            Button {
+                showBulkDeactivateConfirm = true
+            } label: {
+                Label(tr("deactivate"), systemImage: "slash.circle")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(.statusPending)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(Color.bgCard)
+        .overlay(Rectangle().frame(height: 1).foregroundColor(Color.bdBorder), alignment: .top)
     }
 
     // MARK: - Filter bar
 
     private var filterBar: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SearchField(prompt: tr("search_staff"), text: $searchText)
+            HStack(spacing: 10) {
+                SearchField(prompt: tr("search_staff"), text: $searchText)
+                Button(editMode.isEditing ? tr("done") : tr("edit")) {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        if editMode.isEditing {
+                            editMode = .inactive
+                            selectedIds = []
+                        } else {
+                            editMode = .active
+                        }
+                    }
+                }
+                .font(.subheadline.weight(.semibold))
+                .foregroundColor(.bdAccent)
+            }
 
             // Role pills
             ScrollView(.horizontal, showsIndicators: false) {
@@ -118,6 +229,8 @@ struct StaffAdminView: View {
 
 private struct StaffRow: View {
     let staff: Staff
+    let isSelf: Bool
+    let isEditing: Bool
     let onToggleRole: () -> Void
     let onToggleActive: () -> Void
     let onEdit: () -> Void
@@ -144,26 +257,37 @@ private struct StaffRow: View {
 
             Spacer()
 
-            HStack(spacing: 8) {
-                Button(roleLabel, action: onToggleRole)
-                    .font(.caption.weight(.medium))
-                    .padding(.horizontal, 10).padding(.vertical, 5)
-                    .background(staff.role == .admin ? Color.bdAccent.opacity(0.15) : Color.bgElevated)
-                    .foregroundColor(staff.role == .admin ? .bdAccent : .gray)
-                    .clipShape(Capsule())
-                    .overlay(Capsule().stroke(staff.role == .admin ? Color.bdAccent.opacity(0.4) : Color.bdBorder))
+            if isEditing {
+                // In edit mode the List shows the selection circle.
+                // Show a subtle "(you)" tag on the caller's own row
+                // since their selection is ignored by the bulk actions.
+                if isSelf {
+                    Text(tr("you_self_tag"))
+                        .font(.caption2)
+                        .foregroundColor(.gray.opacity(0.7))
+                }
+            } else {
+                HStack(spacing: 8) {
+                    Button(roleLabel, action: onToggleRole)
+                        .font(.caption.weight(.medium))
+                        .padding(.horizontal, 10).padding(.vertical, 5)
+                        .background(staff.role == .admin ? Color.bdAccent.opacity(0.15) : Color.bgElevated)
+                        .foregroundColor(staff.role == .admin ? .bdAccent : .gray)
+                        .clipShape(Capsule())
+                        .overlay(Capsule().stroke(staff.role == .admin ? Color.bdAccent.opacity(0.4) : Color.bdBorder))
 
-                Button(staff.isActive ? tr("active") : tr("inactive"), action: onToggleActive)
-                    .font(.caption)
-                    .padding(.horizontal, 10).padding(.vertical, 5)
-                    .background(Color.bgElevated)
-                    .foregroundColor(staff.isActive ? .gray : .statusPending)
-                    .clipShape(Capsule())
-                    .overlay(Capsule().stroke(staff.isActive ? Color.bdBorder : Color.statusPending.opacity(0.4)))
+                    Button(staff.isActive ? tr("active") : tr("inactive"), action: onToggleActive)
+                        .font(.caption)
+                        .padding(.horizontal, 10).padding(.vertical, 5)
+                        .background(Color.bgElevated)
+                        .foregroundColor(staff.isActive ? .gray : .statusPending)
+                        .clipShape(Capsule())
+                        .overlay(Capsule().stroke(staff.isActive ? Color.bdBorder : Color.statusPending.opacity(0.4)))
 
-                Button(tr("edit"), action: onEdit)
-                    .font(.caption)
-                    .foregroundColor(.bdAccent)
+                    Button(tr("edit"), action: onEdit)
+                        .font(.caption)
+                        .foregroundColor(.bdAccent)
+                }
             }
         }
         .padding(14)

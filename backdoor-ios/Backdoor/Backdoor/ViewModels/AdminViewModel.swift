@@ -299,6 +299,22 @@ final class AdminViewModel {
         await fetchAll()
     }
 
+    /// Bulk set is_active on a list of staff. Skips the caller's own
+    /// staff row so an admin can't accidentally lock themselves out
+    /// via a multi-select.
+    func bulkSetStaffActive(ids: [UUID], to isActive: Bool, excludingSelf selfId: UUID?) async {
+        let targets = ids.filter { $0 != selfId }
+        guard !targets.isEmpty else { return }
+        for id in targets {
+            _ = try? await supabase
+                .from("staff")
+                .update(["is_active": isActive])
+                .eq("id", value: id)
+                .execute()
+        }
+        await fetchAll()
+    }
+
     func updateStaffName(_ staff: Staff, name: String) async throws {
         try await supabase
             .from("staff")
