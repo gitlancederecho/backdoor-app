@@ -19,15 +19,7 @@ struct HoursAdminView: View {
     var body: some View {
         let _ = lang.current
         ScrollView {
-            VStack(spacing: 16) {
-                // Hint
-                Text(tr("hours_hint"))
-                    .font(.caption)
-                    .foregroundColor(.gray)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 8)
-
+            VStack(spacing: 24) {
                 // Timezone
                 VStack(alignment: .leading, spacing: 10) {
                     Text(tr("timezone"))
@@ -40,14 +32,27 @@ struct HoursAdminView: View {
                     timezoneRow()
                 }
                 .padding(.horizontal, 16)
+                .padding(.top, 8)
 
-                // Weekday rows
-                LazyVStack(spacing: 8) {
-                    ForEach(venue.schedule) { day in
-                        dayRow(day)
-                            .padding(.horizontal, 16)
+                // Operating hours
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(tr("operating_hours"))
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.gray)
+                        .tracking(1.2)
+                    Text(tr("hours_hint"))
+                        .font(.caption2)
+                        .foregroundColor(.gray)
+                    Text(tr("plus_one_hint"))
+                        .font(.caption2)
+                        .foregroundColor(.gray)
+                    LazyVStack(spacing: 8) {
+                        ForEach(venue.schedule) { day in
+                            dayRow(day)
+                        }
                     }
                 }
+                .padding(.horizontal, 16)
 
                 // Prep buffer
                 VStack(alignment: .leading, spacing: 10) {
@@ -68,7 +73,6 @@ struct HoursAdminView: View {
                     .cardStyle()
                 }
                 .padding(.horizontal, 16)
-                .padding(.top, 12)
 
                 // Grace period (overtime)
                 VStack(alignment: .leading, spacing: 10) {
