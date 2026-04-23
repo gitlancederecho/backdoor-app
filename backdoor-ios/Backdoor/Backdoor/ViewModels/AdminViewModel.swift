@@ -7,6 +7,7 @@ import Supabase
 final class AdminViewModel {
     var allStaff: [Staff] = []
     var taskTemplates: [TaskTemplate] = []
+    var categories: [Category] = []
     var isLoading = false
 
     init() {
@@ -31,9 +32,60 @@ final class AdminViewModel {
             .order("created_at", ascending: false)
             .execute()
             .value) ?? []
+        async let categoriesResult: [Category] = (try? supabase
+            .from("categories")
+            .select()
+            .order("sort_order")
+            .execute()
+            .value) ?? []
         allStaff = await staffResult
         taskTemplates = await tasksResult
+        categories = await categoriesResult
         isLoading = false
+    }
+
+    // MARK: - Category CRUD
+
+    func createCategory(_ row: NewCategory) async throws {
+        try await supabase.from("categories").insert(row).execute()
+        await fetchCategories()
+    }
+
+    func updateCategory(key: String, _ patch: CategoryPatch) async throws {
+        try await supabase
+            .from("categories")
+            .update(patch)
+            .eq("key", value: key)
+            .execute()
+        await fetchCategories()
+    }
+
+    func deleteCategory(key: String) async throws {
+        // No FK cascade — tasks using this key keep it and render via
+        // CategoryDisplay's humanize fallback until an admin repoints
+        // them or re-creates the category.
+        try await supabase
+            .from("categories")
+            .delete()
+            .eq("key", value: key)
+            .execute()
+        await fetchCategories()
+    }
+
+    /// How many templates currently reference a given category key.
+    /// Used by the delete-confirmation UI to warn about orphan tasks.
+    func taskCountUsingCategory(_ key: String) -> Int {
+        taskTemplates.filter { $0.category == key }.count
+    }
+
+    private func fetchCategories() async {
+        let rows: [Category] = (try? await supabase
+            .from("categories")
+            .select()
+            .order("sort_order")
+            .execute()
+            .value) ?? []
+        categories = rows
     }
 
     // MARK: - Task CRUD

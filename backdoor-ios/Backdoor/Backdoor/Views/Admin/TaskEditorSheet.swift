@@ -34,12 +34,12 @@ struct TaskEditorSheet: View {
     private var isNew: Bool { task == nil }
     private let weekdays = ["M","T","W","T","F","S","S"]
 
-    /// Built-in categories + any custom keys present on existing
-    /// templates, plus the currently-selected key if it's still pending
-    /// its first save (so a freshly-added custom category renders as a
-    /// chip immediately).
+    /// Dropdown options drawn from the loaded `categories` table (sorted
+    /// by sort_order). If the task's current category key isn't in the
+    /// list for some reason (stale data, deleted row), it's appended
+    /// via `includingPending` so the selected chip still renders.
     private var availableCategories: [String] {
-        CategoryDisplay.available(from: adminVM.taskTemplates, includingPending: category)
+        CategoryDisplay.available(in: adminVM.categories, includingPending: category)
     }
 
     private func priorityLabel(_ p: Priority) -> String {
@@ -79,7 +79,7 @@ struct TaskEditorSheet: View {
                                 HStack(spacing: 8) {
                                     ForEach(availableCategories, id: \.self) { cat in
                                         chipButton(
-                                            CategoryDisplay.localized(cat),
+                                            CategoryDisplay.localized(cat, in: adminVM.categories),
                                             selected: category == cat
                                         ) { category = cat }
                                     }
@@ -228,7 +228,7 @@ struct TaskEditorSheet: View {
         .preferredColorScheme(.dark)
         .onAppear { populate() }
         .sheet(isPresented: $showingAddCategory) {
-            AddCategorySheet { newKey in
+            AddCategorySheet(adminVM: adminVM) { newKey in
                 category = newKey
             }
             .environment(lang)
@@ -318,21 +318,34 @@ struct TaskEditorSheet: View {
 
 // MARK: - Add category sheet
 
-/// Small bottom sheet to coin a new category key. Accepts a freeform
-/// name, normalizes it to a DB-friendly lowercase key, and hands it
-/// back to the caller. No separate `categories` table — the key lives
-/// on the saved task row; it shows up in future chip rows because
-/// CategoryDisplay.available() unions built-ins with whatever keys are
-/// present on existing templates.
+/// Inline sheet to create a new `categories` row from inside the task
+/// editor. Accepts an EN label (required), JA label (optional), and
+/// derives the DB key via `CategoryDisplay.normalize`. Persists to the
+/// categories table so the new key shows up in every dropdown
+/// (TaskEditor here, TasksAdmin filter, CategoriesAdmin tab) after a
+/// single round-trip. Full rename / reorder / delete lives on the
+/// CategoriesAdmin tab.
 private struct AddCategorySheet: View {
+    @Bindable var adminVM: AdminViewModel
     let onAdd: (String) -> Void
     @Environment(LanguageManager.self) private var lang
     @Environment(\.dismiss) private var dismiss
-    @State private var raw: String = ""
+    @State private var labelEn: String = ""
+    @State private var labelJa: String = ""
+    @State private var isSaving = false
+    @State private var errorMessage: String?
     @FocusState private var focused: Bool
 
-    private var normalized: String {
-        CategoryDisplay.normalize(raw)
+    private var normalizedKey: String {
+        CategoryDisplay.normalize(labelEn)
+    }
+
+    private var isDuplicate: Bool {
+        !normalizedKey.isEmpty && adminVM.categories.contains(where: { $0.key == normalizedKey })
+    }
+
+    private var canSubmit: Bool {
+        !normalizedKey.isEmpty && !isDuplicate && !isSaving
     }
 
     var body: some View {
@@ -340,18 +353,36 @@ private struct AddCategorySheet: View {
         NavigationStack {
             ZStack {
                 Color.bgPrimary.ignoresSafeArea()
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 14) {
                     Text(tr("add_category_hint"))
                         .font(.caption)
                         .foregroundColor(.gray)
-                    TextField(tr("new_category_placeholder"), text: $raw)
-                        .inputStyle()
-                        .focused($focused)
-                        .textInputAutocapitalization(.words)
-                    if !normalized.isEmpty, normalized != raw.lowercased() {
-                        Text("→ \(normalized)")
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(tr("label_en")).font(.caption).foregroundColor(.gray)
+                        TextField(tr("new_category_placeholder"), text: $labelEn)
+                            .inputStyle()
+                            .focused($focused)
+                            .textInputAutocapitalization(.words)
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(tr("label_ja")).font(.caption).foregroundColor(.gray)
+                        TextField("例: 棚卸", text: $labelJa).inputStyle()
+                    }
+
+                    if !normalizedKey.isEmpty {
+                        Text("→ \(normalizedKey)")
                             .font(.caption2.monospaced())
                             .foregroundColor(.gray)
+                    }
+                    if isDuplicate {
+                        Text(tr("category_duplicate_warning"))
+                            .font(.caption)
+                            .foregroundColor(.statusPending)
+                    }
+                    if let errorMessage {
+                        Text(errorMessage).font(.caption).foregroundColor(.statusPending)
                     }
                     Spacer()
                 }
@@ -366,18 +397,35 @@ private struct AddCategorySheet: View {
                     Button(tr("cancel")) { dismiss() }.foregroundColor(.gray)
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(tr("add")) {
-                        let key = normalized
-                        if !key.isEmpty { onAdd(key) }
-                        dismiss()
-                    }
-                    .foregroundColor(.bdAccent)
-                    .disabled(normalized.isEmpty)
+                    Button(tr("add")) { Task { await save() } }
+                        .foregroundColor(.bdAccent)
+                        .disabled(!canSubmit)
                 }
             }
         }
         .presentationDetents([.medium])
         .preferredColorScheme(.dark)
         .onAppear { focused = true }
+    }
+
+    private func save() async {
+        isSaving = true
+        errorMessage = nil
+        let maxSort = adminVM.categories.map(\.sortOrder).max() ?? 0
+        let row = NewCategory(
+            key: normalizedKey,
+            labelEn: labelEn.trimmingCharacters(in: .whitespaces),
+            labelJa: labelJa.trimmingCharacters(in: .whitespaces).isEmpty ? nil : labelJa,
+            sortOrder: Int16(clamping: Int(maxSort) + 1),
+            isBuiltin: false
+        )
+        do {
+            try await adminVM.createCategory(row)
+            onAdd(normalizedKey)
+            dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        isSaving = false
     }
 }

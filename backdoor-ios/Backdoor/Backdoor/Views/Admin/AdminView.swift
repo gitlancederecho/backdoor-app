@@ -1,15 +1,16 @@
 import SwiftUI
 
 enum AdminTab: String, CaseIterable {
-    case overview, tasks, staff, hours, history
+    case overview, tasks, categories, staff, hours, history
 
     var localized: String {
         switch self {
-        case .overview: return tr("admin_overview")
-        case .tasks:    return tr("admin_tasks")
-        case .staff:    return tr("admin_staff")
-        case .hours:    return tr("admin_hours")
-        case .history:  return tr("admin_history")
+        case .overview:   return tr("admin_overview")
+        case .tasks:      return tr("admin_tasks")
+        case .categories: return tr("admin_categories")
+        case .staff:      return tr("admin_staff")
+        case .hours:      return tr("admin_hours")
+        case .history:    return tr("admin_history")
         }
     }
 }
@@ -55,11 +56,12 @@ struct AdminView: View {
 
                 // Content
                 switch tab {
-                case .overview: OverviewView(taskVM: taskVM, adminVM: adminVM)
-                case .tasks:    TasksAdminView(adminVM: adminVM)
-                case .staff:    StaffAdminView(adminVM: adminVM)
-                case .hours:    HoursAdminView()
-                case .history:  HistoryAdminView()
+                case .overview:   OverviewView(taskVM: taskVM, adminVM: adminVM)
+                case .tasks:      TasksAdminView(adminVM: adminVM)
+                case .categories: CategoriesAdminView(adminVM: adminVM)
+                case .staff:      StaffAdminView(adminVM: adminVM)
+                case .hours:      HoursAdminView()
+                case .history:    HistoryAdminView()
                 }
             }
         }

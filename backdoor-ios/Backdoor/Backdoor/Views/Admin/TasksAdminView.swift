@@ -67,7 +67,7 @@ struct TasksAdminView: View {
                 ScrollView {
                     LazyVStack(spacing: 8) {
                         ForEach(filteredTemplates) { task in
-                            TaskTemplateRow(task: task) {
+                            TaskTemplateRow(task: task, categories: adminVM.categories) {
                                 editingTask = task
                             } onDelete: {
                                 handleDelete(task)
@@ -202,19 +202,19 @@ struct TasksAdminView: View {
         Menu {
             Button(tr("history_range_all")) { categoryFilter = nil }
             Divider()
-            ForEach(CategoryDisplay.available(from: adminVM.taskTemplates), id: \.self) { cat in
+            ForEach(CategoryDisplay.available(in: adminVM.categories), id: \.self) { cat in
                 Button {
                     categoryFilter = cat
                 } label: {
                     HStack {
-                        Text(CategoryDisplay.localized(cat))
+                        Text(CategoryDisplay.localized(cat, in: adminVM.categories))
                         if categoryFilter == cat { Image(systemName: "checkmark") }
                     }
                 }
             }
         } label: {
             filterPill(label: tr("tasks_filter_category"),
-                       value: categoryFilter.map(CategoryDisplay.localized) ?? tr("history_range_all"))
+                       value: categoryFilter.map { CategoryDisplay.localized($0, in: adminVM.categories) } ?? tr("history_range_all"))
         }
     }
 
@@ -268,6 +268,7 @@ struct TasksAdminView: View {
 
 private struct TaskTemplateRow: View {
     let task: TaskTemplate
+    let categories: [Category]
     let onEdit: () -> Void
     let onDelete: () -> Void
     @Environment(LanguageManager.self) private var lang
@@ -301,7 +302,7 @@ private struct TaskTemplateRow: View {
                     .font(.system(size: 15, weight: .medium))
                     .foregroundColor(.white)
                 HStack(spacing: 4) {
-                    Text(CategoryDisplay.localized(task.category))
+                    Text(CategoryDisplay.localized(task.category, in: categories))
                     Text("·")
                     Text(task.isRecurring ? recurrenceLabel : "—")
                     if task.priority != .normal {

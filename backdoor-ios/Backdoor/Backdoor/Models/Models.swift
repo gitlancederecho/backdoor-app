@@ -6,24 +6,63 @@ enum UserRole: String, Codable {
     case admin, staff
 }
 
-/// Category is stored as free-form text in the DB (no CHECK constraint).
-/// The app ships six built-in keys with localized labels, but admins can
-/// add new ones on the fly — unknown keys fall back to title-casing the
-/// raw string so they still render reasonably.
+/// Task category, stored in the `categories` DB table. Six rows seed
+/// with `is_builtin = true`; admins can add / rename / reorder / delete.
+struct Category: Codable, Identifiable, Hashable {
+    var key: String
+    var labelEn: String
+    var labelJa: String?
+    var sortOrder: Int16
+    var isBuiltin: Bool
+    var updatedAt: Date?
+
+    var id: String { key }
+
+    @MainActor
+    var localized: String {
+        LanguageManager.shared.current == .ja ? (labelJa ?? labelEn) : labelEn
+    }
+}
+
+struct NewCategory: Encodable {
+    var key: String
+    var labelEn: String
+    var labelJa: String?
+    var sortOrder: Int16?
+    var isBuiltin: Bool = false
+}
+
+struct CategoryPatch: Encodable {
+    var labelEn: String?
+    var labelJa: String?
+    var sortOrder: Int16?
+}
+
+/// Presentation helpers for the `Category` model. Views pass the loaded
+/// `[Category]` list; for initial load / offline fallback we hardcode
+/// the six built-in keys with `tr()`-backed labels so the app never
+/// shows unreadable identifiers.
 enum CategoryDisplay {
-    /// Built-in keys in the order we want to show them.
+    /// Built-in keys in display order — used only as a fallback when no
+    /// `[Category]` list is available.
     static let builtIn: [String] = ["opening", "bar", "cleaning", "closing", "weekly", "other"]
 
-    /// Normalize a user-typed category name into a stable DB key:
-    /// lowercase, strip whitespace, collapse internal runs to `_`.
+    /// Normalize a user-typed name into a stable DB key: lowercase, strip
+    /// whitespace, collapse non-alphanumeric runs to `_`.
     static func normalize(_ raw: String) -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let parts = trimmed.split(whereSeparator: { !$0.isLetter && !$0.isNumber })
         return parts.joined(separator: "_")
     }
 
+    /// Resolve a key to its display label. Prefers the loaded DB list;
+    /// falls back to the hardcoded built-in `tr` keys; last resort,
+    /// humanizes the raw key (`inventory_check` → `Inventory check`).
     @MainActor
-    static func localized(_ key: String) -> String {
+    static func localized(_ key: String, in categories: [Category] = []) -> String {
+        if let match = categories.first(where: { $0.key == key }) {
+            return match.localized
+        }
         switch key {
         case "opening":  return tr("cat_opening")
         case "closing":  return tr("cat_closing")
@@ -32,21 +71,21 @@ enum CategoryDisplay {
         case "weekly":   return tr("cat_weekly")
         case "other":    return tr("cat_other")
         default:
-            // Humanize an unknown key: "inventory_check" → "Inventory check"
             let spaced = key.replacingOccurrences(of: "_", with: " ")
             guard let first = spaced.first else { return key }
             return String(first).uppercased() + spaced.dropFirst()
         }
     }
 
-    /// Merge built-ins with any keys seen in the given templates,
-    /// preserving built-in display order and appending extras sorted
-    /// alphabetically.
-    static func available(from templates: [TaskTemplate], includingPending pending: String? = nil) -> [String] {
-        var seen = Set(templates.map(\.category))
-        if let p = pending { seen.insert(p) }
-        let extras = seen.subtracting(builtIn).sorted()
-        return builtIn + extras
+    /// Keys available for picker dropdowns, drawn from the loaded DB
+    /// list (sorted by `sort_order`) plus any pending key not yet in
+    /// the list (so a freshly-created category shows as selected).
+    static func available(in categories: [Category], includingPending pending: String? = nil) -> [String] {
+        var keys = categories.sorted { $0.sortOrder < $1.sortOrder }.map(\.key)
+        if let p = pending, !p.isEmpty, !keys.contains(p) {
+            keys.append(p)
+        }
+        return keys
     }
 }
 
