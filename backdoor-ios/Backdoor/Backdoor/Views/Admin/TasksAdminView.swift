@@ -8,6 +8,14 @@ struct TasksAdminView: View {
     @State private var editingTask: TaskTemplate?
     @State private var showingNew = false
 
+    /// Undo state. When a delete lands, we stash the template id + a
+    /// short dismiss timer; tapping Undo within the window fires the
+    /// restore. Only one delete can be undone at a time — starting a
+    /// second delete dismisses the first toast.
+    @State private var pendingUndo: UUID?
+    @State private var undoDismissTask: Task<Void, Never>?
+    private let undoWindow: Duration = .seconds(5)
+
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             ScrollView {
@@ -16,7 +24,7 @@ struct TasksAdminView: View {
                         TaskTemplateRow(task: task) {
                             editingTask = task
                         } onDelete: {
-                            Task { try? await adminVM.deleteTask(id: task.id) }
+                            handleDelete(task)
                         }
                         .padding(.horizontal, 16)
                     }
@@ -38,7 +46,15 @@ struct TasksAdminView: View {
             }
             .padding(.trailing, 20)
             .padding(.bottom, 24)
+
+            if let undoId = pendingUndo {
+                undoToast(for: undoId)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 24)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }
+        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: pendingUndo)
         .sheet(isPresented: $showingNew) {
             TaskEditorSheet(task: nil, adminVM: adminVM)
                 .environment(auth)
@@ -51,6 +67,58 @@ struct TasksAdminView: View {
                 .environment(lang)
                 .environment(venue)
         }
+    }
+
+    // MARK: - Delete / undo wiring
+
+    private func handleDelete(_ task: TaskTemplate) {
+        let id = task.id
+        let bd = BusinessDay.currentBusinessDayISO(schedule: venue.schedule, settings: venue.settings)
+
+        // If another toast was up, dismiss its timer before firing a new delete.
+        undoDismissTask?.cancel()
+
+        Task {
+            try? await adminVM.deleteTask(id: id, businessDay: bd)
+            pendingUndo = id
+            // Schedule auto-dismiss after the undo window.
+            undoDismissTask = Task {
+                try? await Task.sleep(for: undoWindow)
+                guard !Task.isCancelled else { return }
+                pendingUndo = nil
+            }
+        }
+    }
+
+    private func handleUndo(_ id: UUID) {
+        undoDismissTask?.cancel()
+        pendingUndo = nil
+        let bd = BusinessDay.currentBusinessDayISO(schedule: venue.schedule, settings: venue.settings)
+        Task { try? await adminVM.undoDeleteTask(id: id, businessDay: bd) }
+    }
+
+    @ViewBuilder
+    private func undoToast(for id: UUID) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "trash")
+                .foregroundColor(.statusPending)
+            Text(tr("task_deleted_toast"))
+                .font(.subheadline)
+                .foregroundColor(.white)
+            Spacer()
+            Button(tr("undo")) { handleUndo(id) }
+                .font(.subheadline.weight(.semibold))
+                .foregroundColor(.bdAccent)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(Color.bgCard)
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.bdBorder, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .shadow(color: .black.opacity(0.35), radius: 12, y: 4)
     }
 }
 

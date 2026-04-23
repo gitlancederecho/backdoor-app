@@ -302,6 +302,7 @@ struct HistoryAdminView: View {
             case .started:      return .statusProgress
             case .undone:       return .statusPending
             case .reassigned:   return .bdAccent
+            case .deleted:      return .statusPending
             case .created, .note_added, .note_updated, .photo_added: return .gray
             }
         }()
@@ -334,6 +335,7 @@ struct HistoryAdminView: View {
         case .note_added:   return tr("event_note_added")
         case .note_updated: return tr("event_note_updated")
         case .photo_added:  return tr("event_photo_added")
+        case .deleted:      return tr("event_deleted")
         }
     }
 

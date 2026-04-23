@@ -311,6 +311,7 @@ struct TaskCompletionSheet: View {
         case .note_added: return tr("event_note_added")
         case .note_updated: return tr("event_note_updated")
         case .photo_added: return tr("event_photo_added")
+        case .deleted: return tr("event_deleted")
         }
     }
 

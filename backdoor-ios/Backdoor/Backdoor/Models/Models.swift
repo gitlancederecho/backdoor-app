@@ -139,6 +139,7 @@ struct DailyTask: Codable, Identifiable {
 enum TaskEventType: String, Codable, CaseIterable {
     case created, started, completed, undone, reassigned
     case note_added, note_updated, photo_added
+    case deleted
 }
 
 struct TaskEvent: Codable, Identifiable {
