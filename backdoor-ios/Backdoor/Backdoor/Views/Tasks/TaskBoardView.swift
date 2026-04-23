@@ -209,38 +209,15 @@ struct TaskBoardView: View {
 private struct ProfileMenu: View {
     @Environment(AuthViewModel.self) private var auth
     @Environment(LanguageManager.self) private var lang
-    @State private var showingSignOutConfirm = false
-    @State private var showingProfileEdit = false
+    @State private var showingProfile = false
 
     var body: some View {
         let _ = lang.current
-        Menu {
-            if let staff = auth.staff {
-                Text(staff.name)
-                Text(staff.email).font(.caption)
-                Divider()
-            }
-            Menu {
-                ForEach(AppLanguage.allCases) { l in
-                    Button {
-                        lang.current = l
-                    } label: {
-                        if lang.current == l {
-                            Label(l.label, systemImage: "checkmark")
-                        } else {
-                            Text(l.label)
-                        }
-                    }
-                }
-            } label: {
-                Label(tr("language"), systemImage: "globe")
-            }
-            Button(tr("edit_profile"), systemImage: "person.crop.circle") {
-                showingProfileEdit = true
-            }
-            Button(tr("sign_out"), systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
-                showingSignOutConfirm = true
-            }
+        // Tap the avatar → full Profile page. The profile page itself
+        // hosts edit, language picker, and sign out, so the drop-down
+        // menu we used to show here is gone.
+        Button {
+            showingProfile = true
         } label: {
             AvatarView(
                 initials: auth.staff?.initials ?? "?",
@@ -248,14 +225,9 @@ private struct ProfileMenu: View {
                 size: 36
             )
         }
-        .confirmationDialog(tr("sign_out_confirm"), isPresented: $showingSignOutConfirm, titleVisibility: .visible) {
-            Button(tr("sign_out"), role: .destructive) {
-                Task { await auth.signOut() }
-            }
-            Button(tr("cancel"), role: .cancel) {}
-        }
-        .sheet(isPresented: $showingProfileEdit) {
-            ProfileEditSheet()
+        .buttonStyle(.plain)
+        .sheet(isPresented: $showingProfile) {
+            ProfileView()
                 .environment(auth)
                 .environment(lang)
         }

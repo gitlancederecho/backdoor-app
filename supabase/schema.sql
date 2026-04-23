@@ -297,6 +297,44 @@ begin
 end;
 $$;
 
+-- ---------- Profile stats RPC -------------------------------------------
+-- One round-trip for the Profile tab: counts for today / this week /
+-- all-time completions plus in-progress right now. Uses auth.uid() via
+-- a staff-row lookup so callers don't pass their own id.
+create or replace function my_profile_stats()
+returns jsonb
+language sql stable security definer
+set search_path = public
+as $$
+  with me as (
+    select id from staff where auth_user_id = auth.uid() limit 1
+  )
+  select jsonb_build_object(
+    'today_assigned', (
+      select count(*)::int from daily_tasks dt
+      where dt.date = current_date and dt.assigned_to = (select id from me)
+    ),
+    'today_completed', (
+      select count(*)::int from daily_tasks dt
+      where dt.date = current_date and dt.completed_by = (select id from me)
+    ),
+    'week_completed', (
+      select count(*)::int from daily_tasks dt
+      where dt.completed_at >= (now() - interval '7 days')
+        and dt.completed_by = (select id from me)
+    ),
+    'all_time_completed', (
+      select count(*)::int from daily_tasks dt
+      where dt.completed_by = (select id from me)
+    ),
+    'in_progress_now', (
+      select count(*)::int from daily_tasks dt
+      where dt.status = 'in_progress'
+        and (dt.started_by = (select id from me) or dt.assigned_to = (select id from me))
+    )
+  );
+$$;
+
 -- ---------- Row Level Security ------------------------------------------
 alter table staff enable row level security;
 alter table tasks enable row level security;
