@@ -69,6 +69,29 @@ alter table daily_tasks add column if not exists end_time time;
 alter table daily_tasks add column if not exists started_by uuid references staff(id) on delete set null;
 alter table daily_tasks add column if not exists started_at timestamptz;
 
+-- ---------- Task categories --------------------------------------------
+-- Admin-editable list. Tasks.category is a text key that SHOULD match
+-- a row here, but there's no FK — deleting a category leaves orphan
+-- keys that the iOS client humanizes client-side. Six built-ins ship
+-- pre-seeded; admins can add / rename / reorder / delete.
+create table if not exists categories (
+  key text primary key check (key = lower(key) and length(key) > 0),
+  label_en text not null,
+  label_ja text,
+  sort_order smallint not null default 100,
+  is_builtin boolean not null default false,
+  updated_at timestamptz not null default now()
+);
+
+insert into categories (key, label_en, label_ja, sort_order, is_builtin) values
+  ('opening',  'Opening',  'オープン',  1, true),
+  ('bar',      'Bar',      'バー',      2, true),
+  ('cleaning', 'Cleaning', '清掃',      3, true),
+  ('closing',  'Closing',  'クローズ',  4, true),
+  ('weekly',   'Weekly',   '週次',      5, true),
+  ('other',    'Other',    'その他',    6, true)
+on conflict (key) do nothing;
+
 -- ---------- Task events (audit log) -------------------------------------
 -- Append-only log of every meaningful change to a daily_task. Written by
 -- the iOS client directly (no DB trigger). Enum values correspond to
@@ -167,6 +190,11 @@ create trigger venue_settings_updated_at
 drop trigger if exists venue_schedule_updated_at on venue_schedule;
 create trigger venue_schedule_updated_at
   before update on venue_schedule
+  for each row execute function set_updated_at();
+
+drop trigger if exists categories_updated_at on categories;
+create trigger categories_updated_at
+  before update on categories
   for each row execute function set_updated_at();
 
 -- ---------- Helper: current staff row -----------------------------------
@@ -276,6 +304,7 @@ alter table daily_tasks enable row level security;
 alter table venue_settings enable row level security;
 alter table venue_schedule enable row level security;
 alter table task_events enable row level security;
+alter table categories enable row level security;
 
 -- staff: everyone authenticated can read; admin can write anything;
 -- anyone can update their own row, but NOT change their role or is_active
@@ -351,6 +380,15 @@ drop policy if exists venue_schedule_admin_write on venue_schedule;
 create policy venue_schedule_admin_write on venue_schedule
   for all using (is_admin()) with check (is_admin());
 
+-- categories: everyone authenticated reads; only admin can write.
+drop policy if exists categories_read on categories;
+create policy categories_read on categories
+  for select using (auth.role() = 'authenticated');
+
+drop policy if exists categories_admin_write on categories;
+create policy categories_admin_write on categories
+  for all using (is_admin()) with check (is_admin());
+
 -- task_events: append-only audit log.
 -- Everyone authenticated can read. Authenticated users can insert as long
 -- as actor_id is null (system) or matches their own staff.id (no
@@ -390,6 +428,9 @@ begin
     exception when duplicate_object then null;
   end;
   begin alter publication supabase_realtime add table task_events;
+    exception when duplicate_object then null;
+  end;
+  begin alter publication supabase_realtime add table categories;
     exception when duplicate_object then null;
   end;
   begin alter publication supabase_realtime add table venue_settings;
