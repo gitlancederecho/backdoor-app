@@ -252,7 +252,7 @@ struct TaskEditorSheet: View {
             if let t = task {
                 try await adminVM.updateTask(id: t.id, newTask, businessDay: bd)
             } else {
-                try await adminVM.createTask(newTask)
+                try await adminVM.createTask(newTask, businessDay: bd)
             }
             dismiss()
         } catch {

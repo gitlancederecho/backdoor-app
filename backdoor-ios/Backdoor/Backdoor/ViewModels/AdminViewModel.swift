@@ -35,8 +35,35 @@ final class AdminViewModel {
 
     // MARK: - Task CRUD
 
-    func createTask(_ task: NewTask) async throws {
-        try await supabase.from("tasks").insert(task).execute()
+    /// Create a new task template. For recurring templates the
+    /// generate_daily_tasks RPC materializes any matching rows for today;
+    /// non-recurring templates are ignored by that RPC (it filters to
+    /// is_recurring=true) so we materialize a daily_task directly for the
+    /// caller's business day. Without this second write, non-recurring
+    /// tasks would never appear on anyone's board.
+    func createTask(_ task: NewTask, businessDay: String) async throws {
+        let inserted: TaskTemplate = try await supabase
+            .from("tasks")
+            .insert(task)
+            .select()
+            .single()
+            .execute()
+            .value
+
+        if !task.isRecurring {
+            let ad = NewDailyTask(
+                taskId: inserted.id,
+                date: businessDay,
+                assignedTo: task.assignedTo,
+                status: TaskStatus.pending.rawValue,
+                startTime: task.startTime,
+                endTime: task.endTime
+            )
+            // Best-effort. If this fails the admin can re-save — the unique
+            // (task_id, date) constraint will make it safely idempotent.
+            _ = try? await supabase.from("daily_tasks").insert(ad).execute()
+        }
+
         try? await supabase.rpc("generate_daily_tasks").execute()
         await fetchAll()
     }
