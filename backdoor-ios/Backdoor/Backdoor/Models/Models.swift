@@ -232,6 +232,19 @@ struct NewTask: Encodable {
     var endTime: String?
 }
 
+/// Row-level insert for daily_tasks. Used when we need to materialize a
+/// daily_task outside of the generate_daily_tasks RPC — specifically,
+/// when an admin creates a non-recurring template that the generator
+/// won't pick up.
+struct NewDailyTask: Encodable {
+    var taskId: UUID
+    var date: String
+    var assignedTo: UUID?
+    var status: String
+    var startTime: String?
+    var endTime: String?
+}
+
 struct DailyTaskPatch: Encodable {
     var status: TaskStatus?
     var assignedTo: UUID?
