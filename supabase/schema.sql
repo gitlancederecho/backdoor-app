@@ -76,7 +76,7 @@ create table if not exists task_events (
   actor_id uuid references staff(id) on delete set null,
   event_type text not null check (event_type in (
     'created','started','completed','undone','reassigned',
-    'note_added','note_updated','photo_added'
+    'note_added','note_updated','photo_added','deleted'
   )),
   from_value text,
   to_value text,
