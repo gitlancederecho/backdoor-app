@@ -19,6 +19,7 @@ struct TasksAdminView: View {
     @State private var showingNew = false
 
     // Filters
+    @State private var searchText: String = ""
     @State private var recurrenceFilter: TasksRecurrenceFilter = .all
     @State private var categoryFilter: Category? = nil     // nil = all
     @State private var assigneeFilter: TasksAssigneeFilter = .all
@@ -32,7 +33,8 @@ struct TasksAdminView: View {
     private let undoWindow: Duration = .seconds(5)
 
     private var filteredTemplates: [TaskTemplate] {
-        adminVM.taskTemplates.filter { t in
+        let q = searchText.trimmingCharacters(in: .whitespaces)
+        return adminVM.taskTemplates.filter { t in
             switch recurrenceFilter {
             case .all: break
             case .recurring: if !t.isRecurring { return false }
@@ -43,6 +45,13 @@ struct TasksAdminView: View {
             case .all: break
             case .anyone: if t.assignedTo != nil { return false }
             case .staff(let id): if t.assignedTo != id { return false }
+            }
+            if !q.isEmpty {
+                // Match either the English title or the Japanese title so
+                // the search works regardless of the active UI language.
+                let en = t.title.localizedCaseInsensitiveContains(q)
+                let ja = t.titleJa?.localizedCaseInsensitiveContains(q) ?? false
+                if !en && !ja { return false }
             }
             return true
         }
@@ -158,7 +167,9 @@ struct TasksAdminView: View {
     // MARK: - Filter bar
 
     private var filterBar: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
+            SearchField(prompt: tr("search_tasks"), text: $searchText)
+
             // Recurrence pills
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
