@@ -395,8 +395,14 @@ private struct TaskTemplateRow: View {
             Spacer()
             if !isEditing {
                 HStack(spacing: 16) {
-                    Button(tr("edit"), action: onEdit).font(.subheadline).foregroundColor(.bdAccent)
-                    Button(tr("delete"), action: onDelete).font(.subheadline).foregroundColor(.statusPending)
+                    Button(tr("edit"), action: onEdit)
+                        .font(.subheadline)
+                        .foregroundColor(.bdAccent)
+                        .buttonStyle(.borderless)
+                    Button(tr("delete"), action: onDelete)
+                        .font(.subheadline)
+                        .foregroundColor(.statusPending)
+                        .buttonStyle(.borderless)
                 }
             }
             // In edit mode, List renders the selection circle for us —

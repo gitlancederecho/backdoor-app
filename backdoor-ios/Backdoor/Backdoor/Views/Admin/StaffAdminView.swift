@@ -267,6 +267,11 @@ private struct StaffRow: View {
                         .foregroundColor(.gray.opacity(0.7))
                 }
             } else {
+                // Per-row buttons need borderless style so each is
+                // tappable individually inside a List row (otherwise
+                // SwiftUI collapses the whole row into a single tap
+                // target and tap events land on the wrong button —
+                // or none at all).
                 HStack(spacing: 8) {
                     Button(roleLabel, action: onToggleRole)
                         .font(.caption.weight(.medium))
@@ -275,6 +280,7 @@ private struct StaffRow: View {
                         .foregroundColor(staff.role == .admin ? .bdAccent : .gray)
                         .clipShape(Capsule())
                         .overlay(Capsule().stroke(staff.role == .admin ? Color.bdAccent.opacity(0.4) : Color.bdBorder))
+                        .buttonStyle(.borderless)
 
                     Button(staff.isActive ? tr("active") : tr("inactive"), action: onToggleActive)
                         .font(.caption)
@@ -283,10 +289,12 @@ private struct StaffRow: View {
                         .foregroundColor(staff.isActive ? .gray : .statusPending)
                         .clipShape(Capsule())
                         .overlay(Capsule().stroke(staff.isActive ? Color.bdBorder : Color.statusPending.opacity(0.4)))
+                        .buttonStyle(.borderless)
 
                     Button(tr("edit"), action: onEdit)
                         .font(.caption)
                         .foregroundColor(.bdAccent)
+                        .buttonStyle(.borderless)
                 }
             }
         }

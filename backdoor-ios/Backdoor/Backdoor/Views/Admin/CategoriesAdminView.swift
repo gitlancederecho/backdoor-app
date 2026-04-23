@@ -226,15 +226,21 @@ private struct CategoryRow: View {
             }
             Spacer()
             if !isEditing {
-                // Normal mode: per-row edit + delete buttons.
+                // Normal mode: per-row edit + delete buttons. In a List
+                // row SwiftUI collapses multiple Buttons into a single
+                // tap target unless each has an explicit borderless
+                // style — that's what makes both buttons actually fire
+                // their own action.
                 HStack(spacing: 16) {
                     Button(tr("edit"), action: onEdit)
                         .font(.subheadline)
                         .foregroundColor(.bdAccent)
+                        .buttonStyle(.borderless)
                     if !category.isBuiltin {
                         Button(tr("delete"), action: onDelete)
                             .font(.subheadline)
                             .foregroundColor(.statusPending)
+                            .buttonStyle(.borderless)
                     }
                 }
             }
