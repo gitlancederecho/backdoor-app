@@ -72,7 +72,11 @@ alter table daily_tasks add column if not exists started_at timestamptz;
 -- `TaskEventType` in Models.swift.
 create table if not exists task_events (
   id uuid primary key default gen_random_uuid(),
-  daily_task_id uuid not null references daily_tasks(id) on delete cascade,
+  -- Nullable: template-level events (e.g. an admin deletes a template
+  -- that has no daily_tasks materialized yet) are logged with
+  -- daily_task_id = null. The iOS client puts the template title in
+  -- `note` so the History tab can still render the event.
+  daily_task_id uuid references daily_tasks(id) on delete cascade,
   actor_id uuid references staff(id) on delete set null,
   event_type text not null check (event_type in (
     'created','started','completed','undone','reassigned',
@@ -86,6 +90,9 @@ create table if not exists task_events (
 );
 
 create index if not exists task_events_daily_task_idx on task_events(daily_task_id, created_at);
+
+-- Idempotent guard for DBs created before daily_task_id was made nullable.
+alter table task_events alter column daily_task_id drop not null;
 
 create index if not exists daily_tasks_date_idx on daily_tasks(date);
 create index if not exists daily_tasks_assigned_idx on daily_tasks(assigned_to);

@@ -144,7 +144,9 @@ enum TaskEventType: String, Codable, CaseIterable {
 
 struct TaskEvent: Codable, Identifiable {
     let id: UUID
-    let dailyTaskId: UUID
+    /// Nullable for template-level events (e.g. soft-delete of a
+    /// template that has no daily_tasks).
+    let dailyTaskId: UUID?
     let actorId: UUID?
     let eventType: TaskEventType
     let fromValue: String?
@@ -162,7 +164,7 @@ struct TaskEvent: Codable, Identifiable {
 }
 
 struct NewTaskEvent: Encodable {
-    var dailyTaskId: UUID
+    var dailyTaskId: UUID?
     var actorId: UUID?
     var eventType: String
     var fromValue: String?

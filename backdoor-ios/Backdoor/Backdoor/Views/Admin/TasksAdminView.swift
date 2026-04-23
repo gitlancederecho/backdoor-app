@@ -8,11 +8,11 @@ struct TasksAdminView: View {
     @State private var editingTask: TaskTemplate?
     @State private var showingNew = false
 
-    /// Undo state. When a delete lands, we stash the template id + a
+    /// Undo state. When a delete lands, we stash the template + a
     /// short dismiss timer; tapping Undo within the window fires the
     /// restore. Only one delete can be undone at a time — starting a
     /// second delete dismisses the first toast.
-    @State private var pendingUndo: UUID?
+    @State private var pendingUndo: TaskTemplate?
     @State private var undoDismissTask: Task<Void, Never>?
     private let undoWindow: Duration = .seconds(5)
 
@@ -47,14 +47,14 @@ struct TasksAdminView: View {
             .padding(.trailing, 20)
             .padding(.bottom, 24)
 
-            if let undoId = pendingUndo {
-                undoToast(for: undoId)
+            if let template = pendingUndo {
+                undoToast(for: template)
                     .padding(.horizontal, 16)
                     .padding(.bottom, 24)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: pendingUndo)
+        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: pendingUndo?.id)
         .sheet(isPresented: $showingNew) {
             TaskEditorSheet(task: nil, adminVM: adminVM)
                 .environment(auth)
@@ -72,15 +72,12 @@ struct TasksAdminView: View {
     // MARK: - Delete / undo wiring
 
     private func handleDelete(_ task: TaskTemplate) {
-        let id = task.id
-        let bd = BusinessDay.currentBusinessDayISO(schedule: venue.schedule, settings: venue.settings)
-
         // If another toast was up, dismiss its timer before firing a new delete.
         undoDismissTask?.cancel()
 
         Task {
-            try? await adminVM.deleteTask(id: id, businessDay: bd)
-            pendingUndo = id
+            try? await adminVM.deleteTask(task)
+            pendingUndo = task
             // Schedule auto-dismiss after the undo window.
             undoDismissTask = Task {
                 try? await Task.sleep(for: undoWindow)
@@ -90,15 +87,14 @@ struct TasksAdminView: View {
         }
     }
 
-    private func handleUndo(_ id: UUID) {
+    private func handleUndo(_ task: TaskTemplate) {
         undoDismissTask?.cancel()
         pendingUndo = nil
-        let bd = BusinessDay.currentBusinessDayISO(schedule: venue.schedule, settings: venue.settings)
-        Task { try? await adminVM.undoDeleteTask(id: id, businessDay: bd) }
+        Task { try? await adminVM.undoDeleteTask(task) }
     }
 
     @ViewBuilder
-    private func undoToast(for id: UUID) -> some View {
+    private func undoToast(for task: TaskTemplate) -> some View {
         HStack(spacing: 12) {
             Image(systemName: "trash")
                 .foregroundColor(.statusPending)
@@ -106,7 +102,7 @@ struct TasksAdminView: View {
                 .font(.subheadline)
                 .foregroundColor(.white)
             Spacer()
-            Button(tr("undo")) { handleUndo(id) }
+            Button(tr("undo")) { handleUndo(task) }
                 .font(.subheadline.weight(.semibold))
                 .foregroundColor(.bdAccent)
         }

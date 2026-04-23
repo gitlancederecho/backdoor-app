@@ -128,80 +128,56 @@ final class AdminViewModel {
         return rows.first?.id
     }
 
-    /// Soft-delete a task template. Also logs a `deleted` task_event
-    /// against every un-completed daily_task for the current business
-    /// day, so the History tab surfaces what the admin removed.
+    /// Soft-delete a task template + log one template-level `deleted`
+    /// event so the History tab surfaces the action regardless of
+    /// whether any daily_tasks had been materialized yet.
     ///
-    /// Completed daily_tasks are left alone — their history shouldn't
-    /// retroactively show a "deleted" marker for work that already
-    /// happened.
-    func deleteTask(id: UUID, businessDay: String) async throws {
+    /// The event uses `daily_task_id = null`, `from_value = templateId`,
+    /// and `note = templateTitle` so History can render without needing
+    /// to join back through a (now potentially missing) daily_task.
+    func deleteTask(_ template: TaskTemplate) async throws {
         let actor = await currentStaffId()
 
-        // Snapshot today's un-completed daily_tasks for this template so
-        // we can log one event per affected instance.
-        let affected: [DailyTask] = (try? await supabase
-            .from("daily_tasks")
-            .select()
-            .eq("task_id", value: id)
-            .eq("date", value: businessDay)
-            .neq("status", value: TaskStatus.completed.rawValue)
-            .execute()
-            .value) ?? []
-
-        for dt in affected {
-            let event = NewTaskEvent(
-                dailyTaskId: dt.id,
-                actorId: actor,
-                eventType: TaskEventType.deleted.rawValue,
-                fromValue: id.uuidString,
-                toValue: nil
-            )
-            _ = try? await supabase.from("task_events").insert(event).execute()
-        }
+        let event = NewTaskEvent(
+            dailyTaskId: nil,
+            actorId: actor,
+            eventType: TaskEventType.deleted.rawValue,
+            fromValue: template.id.uuidString,
+            toValue: nil,
+            note: template.title,
+            photoUrl: nil
+        )
+        _ = try? await supabase.from("task_events").insert(event).execute()
 
         try await supabase
             .from("tasks")
             .update(["is_active": false])
-            .eq("id", value: id)
+            .eq("id", value: template.id)
             .execute()
         await fetchAll()
     }
 
-    /// Reverse a soft-delete. Sets `is_active = true` and logs an
-    /// `undone` event against the same un-completed daily_tasks so the
-    /// History tab reflects the restore.
-    func undoDeleteTask(id: UUID, businessDay: String) async throws {
+    /// Reverse a soft-delete. Sets `is_active = true` and logs a
+    /// matching `undone` template-level event.
+    func undoDeleteTask(_ template: TaskTemplate) async throws {
         let actor = await currentStaffId()
 
         try await supabase
             .from("tasks")
             .update(["is_active": true])
-            .eq("id", value: id)
+            .eq("id", value: template.id)
             .execute()
 
-        // Log undo events against the daily_tasks that received the
-        // delete events. Completed rows were skipped on delete, so they
-        // stay skipped here too.
-        let affected: [DailyTask] = (try? await supabase
-            .from("daily_tasks")
-            .select()
-            .eq("task_id", value: id)
-            .eq("date", value: businessDay)
-            .neq("status", value: TaskStatus.completed.rawValue)
-            .execute()
-            .value) ?? []
-
-        for dt in affected {
-            let event = NewTaskEvent(
-                dailyTaskId: dt.id,
-                actorId: actor,
-                eventType: TaskEventType.undone.rawValue,
-                fromValue: nil,
-                toValue: id.uuidString
-            )
-            _ = try? await supabase.from("task_events").insert(event).execute()
-        }
+        let event = NewTaskEvent(
+            dailyTaskId: nil,
+            actorId: actor,
+            eventType: TaskEventType.undone.rawValue,
+            fromValue: nil,
+            toValue: template.id.uuidString,
+            note: template.title,
+            photoUrl: nil
+        )
+        _ = try? await supabase.from("task_events").insert(event).execute()
 
         await fetchAll()
     }

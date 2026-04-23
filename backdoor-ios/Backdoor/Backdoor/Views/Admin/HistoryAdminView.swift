@@ -247,7 +247,12 @@ struct HistoryAdminView: View {
                         verbBadge(e.eventType)
                     }
 
-                    if let taskTitle = e.dailyTask?.task?.title, !taskTitle.isEmpty {
+                    // Title preference:
+                    //   1. joined daily_task → task.title (normal events)
+                    //   2. event.note (template-level events like deleted
+                    //      carry the template title here since there's no
+                    //      daily_task_id to join through).
+                    if let taskTitle = e.dailyTask?.task?.title ?? e.note, !taskTitle.isEmpty {
                         Text(taskTitle)
                             .font(.subheadline)
                             .foregroundColor(.white.opacity(0.9))
@@ -264,8 +269,12 @@ struct HistoryAdminView: View {
                             .foregroundColor(.gray)
                     }
 
-                    // Optional note preview
-                    if let note = e.note, !note.isEmpty {
+                    // Optional note preview. Skipped when the note was
+                    // already used as the title fallback above, otherwise
+                    // we'd render the same string twice.
+                    if let note = e.note,
+                       !note.isEmpty,
+                       e.dailyTask?.task?.title != nil {
                         Text(note)
                             .font(.caption)
                             .foregroundColor(.gray)
