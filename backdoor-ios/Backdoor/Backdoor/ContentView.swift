@@ -64,6 +64,9 @@ struct MainTabView: View {
                         .environment(taskVM)
                 }
             }
+            Tab(tr("profile"), systemImage: "person.crop.circle") {
+                ProfileView()
+            }
         }
         .tint(.bdAccent)
     }

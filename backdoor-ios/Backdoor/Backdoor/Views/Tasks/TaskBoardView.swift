@@ -260,13 +260,10 @@ struct TaskBoardView: View {
 
                 Spacer()
 
-                HStack(spacing: 12) {
-                    PeopleSearchButton()
-                        .environment(lang)
-                    ProfileMenu()
-                        .environment(auth)
-                        .environment(lang)
-                }
+                // Profile lives as its own bottom-nav tab now;
+                // top-right keeps only the People search shortcut.
+                PeopleSearchButton()
+                    .environment(lang)
             }
 
             // Row 2: venue status + progress
@@ -449,30 +446,3 @@ private struct PeopleSearchButton: View {
     }
 }
 
-private struct ProfileMenu: View {
-    @Environment(AuthViewModel.self) private var auth
-    @Environment(LanguageManager.self) private var lang
-    @State private var showingProfile = false
-
-    var body: some View {
-        let _ = lang.current
-        // Tap the avatar → full Profile page. The profile page itself
-        // hosts edit, language picker, and sign out, so the drop-down
-        // menu we used to show here is gone.
-        Button {
-            showingProfile = true
-        } label: {
-            AvatarView(
-                initials: auth.staff?.initials ?? "?",
-                url: auth.staff?.avatarUrl,
-                size: 36
-            )
-        }
-        .buttonStyle(.plain)
-        .sheet(isPresented: $showingProfile) {
-            ProfileView()
-                .environment(auth)
-                .environment(lang)
-        }
-    }
-}

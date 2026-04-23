@@ -27,11 +27,11 @@ private struct ProfileStatsParams: Encodable {
 
 /// Personal profile page — same layout for admin and staff, with one
 /// role-specific insight card sandwiched between identity and stats.
-/// Accessed by tapping the top-right avatar on the Today tab.
+/// Lives as its own bottom-nav tab; no Close button because a tab
+/// doesn't have a "dismiss" concept (the user just switches tabs).
 struct ProfileView: View {
     @Environment(AuthViewModel.self) private var auth
     @Environment(LanguageManager.self) private var lang
-    @Environment(\.dismiss) private var dismiss
 
     @State private var showingEdit = false
     @State private var showingSignOutConfirm = false
@@ -69,11 +69,6 @@ struct ProfileView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(Color.bgCard, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(tr("close")) { dismiss() }.foregroundColor(.gray)
-                }
-            }
         }
         .preferredColorScheme(.dark)
         .task { await load() }
