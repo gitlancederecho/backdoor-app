@@ -1,38 +1,118 @@
 import SwiftUI
 
+enum StaffRoleFilter: Hashable { case all, admins, staffOnly }
+enum StaffStatusFilter: Hashable { case all, active, inactive }
+
 struct StaffAdminView: View {
     @Bindable var adminVM: AdminViewModel
     @Environment(LanguageManager.self) private var lang
     @State private var editingStaff: Staff?
 
+    // Filters
+    @State private var searchText: String = ""
+    @State private var roleFilter: StaffRoleFilter = .all
+    @State private var statusFilter: StaffStatusFilter = .all
+
+    private var filteredStaff: [Staff] {
+        let q = searchText.trimmingCharacters(in: .whitespaces)
+        return adminVM.allStaff.filter { s in
+            switch roleFilter {
+            case .all: break
+            case .admins:    if s.role != .admin { return false }
+            case .staffOnly: if s.role != .staff { return false }
+            }
+            switch statusFilter {
+            case .all: break
+            case .active:   if !s.isActive { return false }
+            case .inactive: if s.isActive  { return false }
+            }
+            if !q.isEmpty {
+                let nameMatch = s.name.localizedCaseInsensitiveContains(q)
+                let emailMatch = s.email.localizedCaseInsensitiveContains(q)
+                if !nameMatch && !emailMatch { return false }
+            }
+            return true
+        }
+    }
+
     var body: some View {
         let _ = lang.current
-        ScrollView {
-            LazyVStack(spacing: 8) {
-                Text(tr("staff_signup_hint"))
-                    .font(.caption)
-                    .foregroundColor(.gray)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 4)
+        VStack(spacing: 0) {
+            filterBar
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+            Divider().background(Color.bdBorder)
+            ScrollView {
+                LazyVStack(spacing: 8) {
+                    Text(tr("staff_signup_hint"))
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 4)
 
-                ForEach(adminVM.allStaff) { member in
-                    StaffRow(
-                        staff: member,
-                        onToggleRole: { Task { try? await adminVM.setRole(member, role: member.role == .admin ? .staff : .admin) } },
-                        onToggleActive: { Task { try? await adminVM.toggleActive(member) } },
-                        onEdit: { editingStaff = member }
-                    )
-                    .padding(.horizontal, 16)
+                    ForEach(filteredStaff) { member in
+                        StaffRow(
+                            staff: member,
+                            onToggleRole: { Task { try? await adminVM.setRole(member, role: member.role == .admin ? .staff : .admin) } },
+                            onToggleActive: { Task { try? await adminVM.toggleActive(member) } },
+                            onEdit: { editingStaff = member }
+                        )
+                        .padding(.horizontal, 16)
+                    }
+                    Spacer().frame(height: 24)
                 }
-                Spacer().frame(height: 24)
+                .padding(.top, 12)
             }
-            .padding(.top, 12)
         }
         .sheet(item: $editingStaff) { staff in
             EditStaffSheet(staff: staff, adminVM: adminVM)
                 .environment(lang)
         }
+    }
+
+    // MARK: - Filter bar
+
+    private var filterBar: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SearchField(prompt: tr("search_staff"), text: $searchText)
+
+            // Role pills
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    rolePill(.all,       label: tr("role_all"))
+                    rolePill(.admins,    label: tr("role_admins"))
+                    rolePill(.staffOnly, label: tr("role_staff_only"))
+                }
+            }
+
+            // Status pills
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    statusPill(.all,      label: tr("status_all"))
+                    statusPill(.active,   label: tr("status_active"))
+                    statusPill(.inactive, label: tr("status_inactive"))
+                }
+            }
+        }
+    }
+
+    private func rolePill(_ value: StaffRoleFilter, label: String) -> some View {
+        Button(label) { roleFilter = value }
+            .font(.caption.weight(roleFilter == value ? .semibold : .regular))
+            .foregroundColor(roleFilter == value ? .black : .gray)
+            .padding(.horizontal, 12).padding(.vertical, 6)
+            .background(roleFilter == value ? Color.bdAccent : Color.bgElevated)
+            .clipShape(Capsule())
+    }
+
+    private func statusPill(_ value: StaffStatusFilter, label: String) -> some View {
+        Button(label) { statusFilter = value }
+            .font(.caption.weight(statusFilter == value ? .semibold : .regular))
+            .foregroundColor(statusFilter == value ? .black : .gray)
+            .padding(.horizontal, 12).padding(.vertical, 6)
+            .background(statusFilter == value ? Color.bdAccent : Color.bgElevated)
+            .clipShape(Capsule())
     }
 }
 
