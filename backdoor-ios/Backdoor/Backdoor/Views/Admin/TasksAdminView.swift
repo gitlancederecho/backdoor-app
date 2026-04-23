@@ -1,5 +1,15 @@
 import SwiftUI
 
+enum TasksRecurrenceFilter: Hashable {
+    case all, recurring, oneOff
+}
+
+enum TasksAssigneeFilter: Hashable {
+    case all
+    case anyone          // unassigned templates
+    case staff(UUID)
+}
+
 struct TasksAdminView: View {
     @Bindable var adminVM: AdminViewModel
     @Environment(AuthViewModel.self) private var auth
@@ -7,6 +17,11 @@ struct TasksAdminView: View {
     @Environment(VenueViewModel.self) private var venue
     @State private var editingTask: TaskTemplate?
     @State private var showingNew = false
+
+    // Filters
+    @State private var recurrenceFilter: TasksRecurrenceFilter = .all
+    @State private var categoryFilter: Category? = nil     // nil = all
+    @State private var assigneeFilter: TasksAssigneeFilter = .all
 
     /// Undo state. When a delete lands, we stash the template + a
     /// short dismiss timer; tapping Undo within the window fires the
@@ -16,21 +31,44 @@ struct TasksAdminView: View {
     @State private var undoDismissTask: Task<Void, Never>?
     private let undoWindow: Duration = .seconds(5)
 
+    private var filteredTemplates: [TaskTemplate] {
+        adminVM.taskTemplates.filter { t in
+            switch recurrenceFilter {
+            case .all: break
+            case .recurring: if !t.isRecurring { return false }
+            case .oneOff:    if t.isRecurring  { return false }
+            }
+            if let c = categoryFilter, t.category != c { return false }
+            switch assigneeFilter {
+            case .all: break
+            case .anyone: if t.assignedTo != nil { return false }
+            case .staff(let id): if t.assignedTo != id { return false }
+            }
+            return true
+        }
+    }
+
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
-            ScrollView {
-                LazyVStack(spacing: 8) {
-                    ForEach(adminVM.taskTemplates) { task in
-                        TaskTemplateRow(task: task) {
-                            editingTask = task
-                        } onDelete: {
-                            handleDelete(task)
+            VStack(spacing: 0) {
+                filterBar
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                Divider().background(Color.bdBorder)
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        ForEach(filteredTemplates) { task in
+                            TaskTemplateRow(task: task) {
+                                editingTask = task
+                            } onDelete: {
+                                handleDelete(task)
+                            }
+                            .padding(.horizontal, 16)
                         }
-                        .padding(.horizontal, 16)
+                        Spacer().frame(height: 80)
                     }
-                    Spacer().frame(height: 80)
+                    .padding(.top, 12)
                 }
-                .padding(.top, 12)
             }
 
             Button {
@@ -115,6 +153,105 @@ struct TasksAdminView: View {
         )
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .shadow(color: .black.opacity(0.35), radius: 12, y: 4)
+    }
+
+    // MARK: - Filter bar
+
+    private var filterBar: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Recurrence pills
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    recurrencePill(.all,       label: tr("history_range_all"))
+                    recurrencePill(.recurring, label: tr("recurring"))
+                    recurrencePill(.oneOff,    label: tr("filter_one_off"))
+                }
+            }
+
+            // Category + assignee menus on one row
+            HStack(spacing: 8) {
+                categoryMenu
+                assigneeMenu
+                Spacer()
+                if adminVM.isLoading { ProgressView().scaleEffect(0.75) }
+            }
+        }
+    }
+
+    private func recurrencePill(_ value: TasksRecurrenceFilter, label: String) -> some View {
+        Button(label) { recurrenceFilter = value }
+            .font(.caption.weight(recurrenceFilter == value ? .semibold : .regular))
+            .foregroundColor(recurrenceFilter == value ? .black : .gray)
+            .padding(.horizontal, 12).padding(.vertical, 6)
+            .background(recurrenceFilter == value ? Color.bdAccent : Color.bgElevated)
+            .clipShape(Capsule())
+    }
+
+    private var categoryMenu: some View {
+        Menu {
+            Button(tr("history_range_all")) { categoryFilter = nil }
+            Divider()
+            ForEach(Category.displayOrder, id: \.rawValue) { cat in
+                Button {
+                    categoryFilter = cat
+                } label: {
+                    HStack {
+                        Text(cat.localized)
+                        if categoryFilter == cat { Image(systemName: "checkmark") }
+                    }
+                }
+            }
+        } label: {
+            filterPill(label: tr("tasks_filter_category"),
+                       value: categoryFilter?.localized ?? tr("history_range_all"))
+        }
+    }
+
+    private var assigneeMenu: some View {
+        Menu {
+            Button(tr("history_range_all"))  { assigneeFilter = .all }
+            Button(tr("assign_anyone"))      { assigneeFilter = .anyone }
+            Divider()
+            ForEach(adminVM.allStaff) { s in
+                Button {
+                    assigneeFilter = .staff(s.id)
+                } label: {
+                    HStack {
+                        Text(s.name)
+                        if case .staff(let id) = assigneeFilter, id == s.id {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            filterPill(label: tr("tasks_filter_assignee"),
+                       value: assigneeSummary)
+        }
+    }
+
+    private var assigneeSummary: String {
+        switch assigneeFilter {
+        case .all:            return tr("history_range_all")
+        case .anyone:         return tr("assign_anyone")
+        case .staff(let id):  return adminVM.allStaff.first { $0.id == id }?.name ?? "—"
+        }
+    }
+
+    private func filterPill(label: String, value: String) -> some View {
+        HStack(spacing: 4) {
+            Text(label).font(.caption2).foregroundColor(.gray)
+            Text(value)
+                .font(.caption.weight(.medium))
+                .foregroundColor(.white)
+                .lineLimit(1)
+            Image(systemName: "chevron.down")
+                .font(.system(size: 9))
+                .foregroundColor(.gray)
+        }
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(Color.bgElevated)
+        .clipShape(Capsule())
     }
 }
 
