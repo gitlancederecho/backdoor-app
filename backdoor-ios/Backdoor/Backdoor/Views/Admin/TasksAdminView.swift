@@ -21,7 +21,7 @@ struct TasksAdminView: View {
     // Filters
     @State private var searchText: String = ""
     @State private var recurrenceFilter: TasksRecurrenceFilter = .all
-    @State private var categoryFilter: Category? = nil     // nil = all
+    @State private var categoryFilter: String? = nil       // nil = all; otherwise a category key
     @State private var assigneeFilter: TasksAssigneeFilter = .all
 
     /// Undo state. When a delete lands, we stash the template + a
@@ -202,19 +202,19 @@ struct TasksAdminView: View {
         Menu {
             Button(tr("history_range_all")) { categoryFilter = nil }
             Divider()
-            ForEach(Category.displayOrder, id: \.rawValue) { cat in
+            ForEach(CategoryDisplay.available(from: adminVM.taskTemplates), id: \.self) { cat in
                 Button {
                     categoryFilter = cat
                 } label: {
                     HStack {
-                        Text(cat.localized)
+                        Text(CategoryDisplay.localized(cat))
                         if categoryFilter == cat { Image(systemName: "checkmark") }
                     }
                 }
             }
         } label: {
             filterPill(label: tr("tasks_filter_category"),
-                       value: categoryFilter?.localized ?? tr("history_range_all"))
+                       value: categoryFilter.map(CategoryDisplay.localized) ?? tr("history_range_all"))
         }
     }
 
@@ -301,7 +301,7 @@ private struct TaskTemplateRow: View {
                     .font(.system(size: 15, weight: .medium))
                     .foregroundColor(.white)
                 HStack(spacing: 4) {
-                    Text(task.category.localized)
+                    Text(CategoryDisplay.localized(task.category))
                     Text("·")
                     Text(task.isRecurring ? recurrenceLabel : "—")
                     if task.priority != .normal {

@@ -6,46 +6,47 @@ enum UserRole: String, Codable {
     case admin, staff
 }
 
-enum Category: String, Codable, CaseIterable {
-    case opening, closing, bar, cleaning, weekly, other
+/// Category is stored as free-form text in the DB (no CHECK constraint).
+/// The app ships six built-in keys with localized labels, but admins can
+/// add new ones on the fly — unknown keys fall back to title-casing the
+/// raw string so they still render reasonably.
+enum CategoryDisplay {
+    /// Built-in keys in the order we want to show them.
+    static let builtIn: [String] = ["opening", "bar", "cleaning", "closing", "weekly", "other"]
 
-    var label: String {
-        switch self {
-        case .opening:  return "Opening"
-        case .closing:  return "Closing"
-        case .bar:      return "Bar"
-        case .cleaning: return "Cleaning"
-        case .weekly:   return "Weekly"
-        case .other:    return "Other"
-        }
+    /// Normalize a user-typed category name into a stable DB key:
+    /// lowercase, strip whitespace, collapse internal runs to `_`.
+    static func normalize(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let parts = trimmed.split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+        return parts.joined(separator: "_")
     }
 
-    var labelJa: String {
-        switch self {
-        case .opening:  return "オープン"
-        case .closing:  return "クローズ"
-        case .bar:      return "バー"
-        case .cleaning: return "清掃"
-        case .weekly:   return "週次"
-        case .other:    return "その他"
-        }
-    }
-
-    /// Localized label based on the user's selected app language.
     @MainActor
-    var localized: String {
-        switch self {
-        case .opening:  return tr("cat_opening")
-        case .closing:  return tr("cat_closing")
-        case .bar:      return tr("cat_bar")
-        case .cleaning: return tr("cat_cleaning")
-        case .weekly:   return tr("cat_weekly")
-        case .other:    return tr("cat_other")
+    static func localized(_ key: String) -> String {
+        switch key {
+        case "opening":  return tr("cat_opening")
+        case "closing":  return tr("cat_closing")
+        case "bar":      return tr("cat_bar")
+        case "cleaning": return tr("cat_cleaning")
+        case "weekly":   return tr("cat_weekly")
+        case "other":    return tr("cat_other")
+        default:
+            // Humanize an unknown key: "inventory_check" → "Inventory check"
+            let spaced = key.replacingOccurrences(of: "_", with: " ")
+            guard let first = spaced.first else { return key }
+            return String(first).uppercased() + spaced.dropFirst()
         }
     }
 
-    static var displayOrder: [Category] {
-        [.opening, .bar, .cleaning, .closing, .weekly, .other]
+    /// Merge built-ins with any keys seen in the given templates,
+    /// preserving built-in display order and appending extras sorted
+    /// alphabetically.
+    static func available(from templates: [TaskTemplate], includingPending pending: String? = nil) -> [String] {
+        var seen = Set(templates.map(\.category))
+        if let p = pending { seen.insert(p) }
+        let extras = seen.subtracting(builtIn).sorted()
+        return builtIn + extras
     }
 }
 
@@ -94,7 +95,9 @@ struct TaskTemplate: Codable, Identifiable {
     let id: UUID
     var title: String
     var titleJa: String?
-    var category: Category
+    /// Lowercase key. See CategoryDisplay for rendering and the list of
+    /// built-ins vs. admin-added values.
+    var category: String
     var assignedTo: UUID?
     var isRecurring: Bool
     var recurrenceType: RecurrenceType?
@@ -221,7 +224,7 @@ enum TimeOfDay {
 struct NewTask: Encodable {
     var title: String
     var titleJa: String?
-    var category: Category
+    var category: String
     var assignedTo: UUID?
     var isRecurring: Bool
     var recurrenceType: RecurrenceType?

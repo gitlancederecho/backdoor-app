@@ -10,7 +10,8 @@ struct TaskEditorSheet: View {
 
     @State private var title = ""
     @State private var titleJa = ""
-    @State private var category: Category = .opening
+    @State private var category: String = "opening"
+    @State private var showingAddCategory = false
     @State private var assignedTo: UUID? = nil
     @State private var isRecurring = true
     @State private var recurrenceType: RecurrenceType = .daily
@@ -32,6 +33,14 @@ struct TaskEditorSheet: View {
 
     private var isNew: Bool { task == nil }
     private let weekdays = ["M","T","W","T","F","S","S"]
+
+    /// Built-in categories + any custom keys present on existing
+    /// templates, plus the currently-selected key if it's still pending
+    /// its first save (so a freshly-added custom category renders as a
+    /// chip immediately).
+    private var availableCategories: [String] {
+        CategoryDisplay.available(from: adminVM.taskTemplates, includingPending: category)
+    }
 
     private func priorityLabel(_ p: Priority) -> String {
         switch p {
@@ -68,9 +77,30 @@ struct TaskEditorSheet: View {
                         field(tr("category")) {
                             ScrollView(.horizontal, showsIndicators: false) {
                                 HStack(spacing: 8) {
-                                    ForEach(Category.allCases, id: \.self) { cat in
-                                        chipButton(cat.localized, selected: category == cat) { category = cat }
+                                    ForEach(availableCategories, id: \.self) { cat in
+                                        chipButton(
+                                            CategoryDisplay.localized(cat),
+                                            selected: category == cat
+                                        ) { category = cat }
                                     }
+                                    // "+ Add" chip at the end of the row
+                                    // opens a small sheet to coin a new
+                                    // category key. The new key is
+                                    // stored straight onto this task;
+                                    // it persists in the category column
+                                    // once the admin saves.
+                                    Button {
+                                        showingAddCategory = true
+                                    } label: {
+                                        Label(tr("add_category"), systemImage: "plus")
+                                            .font(.caption.weight(.medium))
+                                            .foregroundColor(.bdAccent)
+                                            .padding(.horizontal, 10).padding(.vertical, 6)
+                                            .background(Color.bgElevated)
+                                            .overlay(Capsule().stroke(Color.bdAccent.opacity(0.4), style: StrokeStyle(lineWidth: 1, dash: [3, 2])))
+                                            .clipShape(Capsule())
+                                    }
+                                    .buttonStyle(.plain)
                                 }
                             }
                         }
@@ -197,6 +227,12 @@ struct TaskEditorSheet: View {
         .presentationDetents([.large])
         .preferredColorScheme(.dark)
         .onAppear { populate() }
+        .sheet(isPresented: $showingAddCategory) {
+            AddCategorySheet { newKey in
+                category = newKey
+            }
+            .environment(lang)
+        }
     }
 
     private func populate() {
@@ -277,5 +313,71 @@ struct TaskEditorSheet: View {
             .background(selected ? Color.bdAccent : Color.bgElevated)
             .foregroundColor(selected ? .black : .gray)
             .clipShape(Capsule())
+    }
+}
+
+// MARK: - Add category sheet
+
+/// Small bottom sheet to coin a new category key. Accepts a freeform
+/// name, normalizes it to a DB-friendly lowercase key, and hands it
+/// back to the caller. No separate `categories` table — the key lives
+/// on the saved task row; it shows up in future chip rows because
+/// CategoryDisplay.available() unions built-ins with whatever keys are
+/// present on existing templates.
+private struct AddCategorySheet: View {
+    let onAdd: (String) -> Void
+    @Environment(LanguageManager.self) private var lang
+    @Environment(\.dismiss) private var dismiss
+    @State private var raw: String = ""
+    @FocusState private var focused: Bool
+
+    private var normalized: String {
+        CategoryDisplay.normalize(raw)
+    }
+
+    var body: some View {
+        let _ = lang.current
+        NavigationStack {
+            ZStack {
+                Color.bgPrimary.ignoresSafeArea()
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(tr("add_category_hint"))
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                    TextField(tr("new_category_placeholder"), text: $raw)
+                        .inputStyle()
+                        .focused($focused)
+                        .textInputAutocapitalization(.words)
+                    if !normalized.isEmpty, normalized != raw.lowercased() {
+                        Text("→ \(normalized)")
+                            .font(.caption2.monospaced())
+                            .foregroundColor(.gray)
+                    }
+                    Spacer()
+                }
+                .padding(20)
+            }
+            .navigationTitle(tr("add_category"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Color.bgCard, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(tr("cancel")) { dismiss() }.foregroundColor(.gray)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(tr("add")) {
+                        let key = normalized
+                        if !key.isEmpty { onAdd(key) }
+                        dismiss()
+                    }
+                    .foregroundColor(.bdAccent)
+                    .disabled(normalized.isEmpty)
+                }
+            }
+        }
+        .presentationDetents([.medium])
+        .preferredColorScheme(.dark)
+        .onAppear { focused = true }
     }
 }

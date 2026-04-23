@@ -93,6 +93,17 @@ struct NonRecurringTaskTests {
         #expect(decoded["status"] as? String == "pending")
     }
 
+    /// Category keys are user-authored strings. Verify the normalizer
+    /// produces stable DB keys: lowercased, with non-alphanumeric runs
+    /// collapsed to underscores.
+    @Test func categoryNormalizationCollapsesToStableKeys() {
+        #expect(CategoryDisplay.normalize("Inventory")          == "inventory")
+        #expect(CategoryDisplay.normalize("  Deep Cleaning  ")  == "deep_cleaning")
+        #expect(CategoryDisplay.normalize("Prep / Side Work")   == "prep_side_work")
+        #expect(CategoryDisplay.normalize("!!! 深夜 !!!")         == "深夜")
+        #expect(CategoryDisplay.normalize("")                    == "")
+    }
+
     /// Sanity: NewTask itself still encodes the way the existing create
     /// path expects. Regression guard if anyone reorders / adds fields.
     @Test func newTaskNonRecurringEncodesCorrectly() throws {
@@ -100,7 +111,7 @@ struct NonRecurringTaskTests {
         let task = NewTask(
             title: "Replace broken glass pitcher",
             titleJa: "割れたピッチャーの交換",
-            category: .other,
+            category: "other",
             assignedTo: nil,
             isRecurring: false,
             recurrenceType: nil,

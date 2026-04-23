@@ -23,7 +23,10 @@ create table if not exists tasks (
   id uuid primary key default gen_random_uuid(),
   title text not null,
   title_ja text,
-  category text not null check (category in ('opening','closing','bar','cleaning','weekly','other')),
+  -- Free-form category key. We ship six built-ins via localization, but
+  -- admins can coin new ones from the Task editor; the iOS client
+  -- falls back to title-casing the raw key for unknown values.
+  category text not null,
   assigned_to uuid references staff(id) on delete set null,
   is_recurring boolean not null default false,
   recurrence_type text check (recurrence_type in ('daily','weekly','monthly')),
@@ -93,6 +96,9 @@ create index if not exists task_events_daily_task_idx on task_events(daily_task_
 
 -- Idempotent guard for DBs created before daily_task_id was made nullable.
 alter table task_events alter column daily_task_id drop not null;
+
+-- Idempotent guard for DBs created with the original category CHECK.
+alter table tasks drop constraint if exists tasks_category_check;
 
 create index if not exists daily_tasks_date_idx on daily_tasks(date);
 create index if not exists daily_tasks_assigned_idx on daily_tasks(assigned_to);

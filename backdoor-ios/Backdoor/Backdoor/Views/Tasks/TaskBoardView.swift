@@ -108,7 +108,7 @@ struct TaskBoardView: View {
                 return a < b
             }
         case .anytime:
-            return tasks.sorted { ($0.task?.category.rawValue ?? "") < ($1.task?.category.rawValue ?? "") }
+            return tasks.sorted { ($0.task?.category ?? "") < ($1.task?.category ?? "") }
         case .done:
             return tasks.sorted { ($0.completedAt ?? .distantPast) > ($1.completedAt ?? .distantPast) }
         }
