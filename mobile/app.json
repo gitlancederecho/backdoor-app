@@ -1,0 +1,54 @@
+{
+  "expo": {
+    "name": "The Backdoor",
+    "slug": "backdoor-app",
+    "version": "1.0.0",
+    "scheme": "backdoor",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0a0a0a",
+    "splash": {
+      "backgroundColor": "#0a0a0a"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.thebackdoor.app",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#0a0a0a"
+      },
+      "package": "com.thebackdoor.app",
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow The Backdoor to attach photos to tasks.",
+          "cameraPermission": "Allow The Backdoor to take task completion photos."
+        }
+      ],
+      "expo-secure-store",
+      "expo-asset"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "41da34b6-f4c5-4a7e-a9c5-ade71da0572e"
+      }
+    },
+    "owner": "lancederecho"
+  }
+}

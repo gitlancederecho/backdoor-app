@@ -9,3 +9,7 @@ dist-ssr
 !.vscode/extensions.json
 .idea
 *.log
+
+# Xcode user-specific
+xcuserdata/
+*.xcuserstate
