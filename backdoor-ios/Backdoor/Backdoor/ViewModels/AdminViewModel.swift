@@ -78,6 +78,48 @@ final class AdminViewModel {
         taskTemplates.filter { $0.category == key }.count
     }
 
+    /// Persist the current order of `categories` — writes a new
+    /// sort_order (1-based index) to any row whose position changed.
+    /// Called after an .onMove so the DB matches what the UI shows.
+    func persistCategoryOrder() async {
+        for (index, cat) in categories.enumerated() {
+            let desired = Int16(clamping: index + 1)
+            if cat.sortOrder != desired {
+                try? await supabase
+                    .from("categories")
+                    .update(CategoryPatch(sortOrder: desired))
+                    .eq("key", value: cat.key)
+                    .execute()
+            }
+        }
+        // Refresh so in-memory sort_orders reflect what landed in the
+        // DB (timestamps, server-side validation, etc).
+        await fetchCategories()
+    }
+
+    /// Delete multiple templates in one go. Each delete reuses the
+    /// existing deleteTask path so event logging + cascade semantics
+    /// stay consistent with single-row deletes.
+    func deleteTaskTemplates(_ templates: [TaskTemplate]) async {
+        for t in templates {
+            try? await deleteTask(t)
+        }
+    }
+
+    /// Delete multiple categories (non-builtin only — the caller is
+    /// expected to have filtered). Returns how many actually deleted.
+    @discardableResult
+    func deleteCategories(keys: [String]) async -> Int {
+        var count = 0
+        for k in keys {
+            do {
+                try await deleteCategory(key: k)
+                count += 1
+            } catch {}
+        }
+        return count
+    }
+
     private func fetchCategories() async {
         let rows: [Category] = (try? await supabase
             .from("categories")

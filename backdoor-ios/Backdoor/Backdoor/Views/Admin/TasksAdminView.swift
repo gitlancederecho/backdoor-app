@@ -27,10 +27,16 @@ struct TasksAdminView: View {
     /// Undo state. When a delete lands, we stash the template + a
     /// short dismiss timer; tapping Undo within the window fires the
     /// restore. Only one delete can be undone at a time — starting a
-    /// second delete dismisses the first toast.
+    /// second delete dismisses the first toast. Bulk deletions skip
+    /// the undo toast (user confirms via alert first).
     @State private var pendingUndo: TaskTemplate?
     @State private var undoDismissTask: Task<Void, Never>?
     private let undoWindow: Duration = .seconds(5)
+
+    // Edit mode + bulk selection
+    @State private var editMode: EditMode = .inactive
+    @State private var selectedIds: Set<UUID> = []
+    @State private var showBulkDeleteConfirm = false
 
     private var filteredTemplates: [TaskTemplate] {
         let q = searchText.trimmingCharacters(in: .whitespaces)
@@ -64,35 +70,27 @@ struct TasksAdminView: View {
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
                 Divider().background(Color.bdBorder)
-                ScrollView {
-                    LazyVStack(spacing: 8) {
-                        ForEach(filteredTemplates) { task in
-                            TaskTemplateRow(task: task, categories: adminVM.categories) {
-                                editingTask = task
-                            } onDelete: {
-                                handleDelete(task)
-                            }
-                            .padding(.horizontal, 16)
-                        }
-                        Spacer().frame(height: 80)
-                    }
-                    .padding(.top, 12)
+                tasksList
+                if editMode.isEditing, !selectedIds.isEmpty {
+                    bulkActionBar
                 }
             }
 
-            Button {
-                showingNew = true
-            } label: {
-                Image(systemName: "plus")
-                    .font(.title2.bold())
-                    .foregroundColor(.black)
-                    .frame(width: 56, height: 56)
-                    .background(Color.bdAccent)
-                    .clipShape(Circle())
-                    .shadow(color: .black.opacity(0.3), radius: 8, y: 4)
+            if !editMode.isEditing {
+                Button {
+                    showingNew = true
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.title2.bold())
+                        .foregroundColor(.black)
+                        .frame(width: 56, height: 56)
+                        .background(Color.bdAccent)
+                        .clipShape(Circle())
+                        .shadow(color: .black.opacity(0.3), radius: 8, y: 4)
+                }
+                .padding(.trailing, 20)
+                .padding(.bottom, 24)
             }
-            .padding(.trailing, 20)
-            .padding(.bottom, 24)
 
             if let template = pendingUndo {
                 undoToast(for: template)
@@ -114,6 +112,73 @@ struct TasksAdminView: View {
                 .environment(lang)
                 .environment(venue)
         }
+        .alert(
+            tr("delete_n_tasks_confirm"),
+            isPresented: $showBulkDeleteConfirm,
+            presenting: Array(selectedIds)
+        ) { ids in
+            Button(String(format: tr("delete_n"), ids.count), role: .destructive) {
+                let templates = adminVM.taskTemplates.filter { ids.contains($0.id) }
+                Task {
+                    await adminVM.deleteTaskTemplates(templates)
+                    selectedIds = []
+                    editMode = .inactive
+                }
+            }
+            Button(tr("cancel"), role: .cancel) {}
+        } message: { ids in
+            Text(String(format: tr("delete_n_tasks_message"), ids.count))
+        }
+    }
+
+    private var tasksList: some View {
+        List(selection: $selectedIds) {
+            ForEach(filteredTemplates) { task in
+                TaskTemplateRow(
+                    task: task,
+                    categories: adminVM.categories,
+                    isEditing: editMode.isEditing,
+                    onEdit: { editingTask = task },
+                    onDelete: { handleDelete(task) }
+                )
+                .tag(task.id)
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+                .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                    Button(role: .destructive) { handleDelete(task) } label: {
+                        Label(tr("delete"), systemImage: "trash")
+                    }
+                }
+            }
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .background(Color.bgPrimary)
+        .environment(\.editMode, $editMode)
+    }
+
+    private var bulkActionBar: some View {
+        HStack(spacing: 12) {
+            Text(String(format: tr("selected_count"), selectedIds.count))
+                .font(.subheadline)
+                .foregroundColor(.white)
+            Spacer()
+            Button {
+                showBulkDeleteConfirm = true
+            } label: {
+                Label(
+                    String(format: tr("delete_n"), selectedIds.count),
+                    systemImage: "trash"
+                )
+                .font(.subheadline.weight(.semibold))
+                .foregroundColor(.statusPending)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(Color.bgCard)
+        .overlay(Rectangle().frame(height: 1).foregroundColor(Color.bdBorder), alignment: .top)
     }
 
     // MARK: - Delete / undo wiring
@@ -179,12 +244,24 @@ struct TasksAdminView: View {
                 }
             }
 
-            // Category + assignee menus on one row
+            // Category + assignee menus on one row; edit toggle pinned right.
             HStack(spacing: 8) {
                 categoryMenu
                 assigneeMenu
                 Spacer()
                 if adminVM.isLoading { ProgressView().scaleEffect(0.75) }
+                Button(editMode.isEditing ? tr("done") : tr("edit")) {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        if editMode.isEditing {
+                            editMode = .inactive
+                            selectedIds = []
+                        } else {
+                            editMode = .active
+                        }
+                    }
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundColor(.bdAccent)
             }
         }
     }
@@ -269,6 +346,7 @@ struct TasksAdminView: View {
 private struct TaskTemplateRow: View {
     let task: TaskTemplate
     let categories: [Category]
+    let isEditing: Bool
     let onEdit: () -> Void
     let onDelete: () -> Void
     @Environment(LanguageManager.self) private var lang
@@ -315,10 +393,15 @@ private struct TaskTemplateRow: View {
                 .foregroundColor(.gray)
             }
             Spacer()
-            HStack(spacing: 16) {
-                Button(tr("edit"), action: onEdit).font(.subheadline).foregroundColor(.bdAccent)
-                Button(tr("delete"), action: onDelete).font(.subheadline).foregroundColor(.statusPending)
+            if !isEditing {
+                HStack(spacing: 16) {
+                    Button(tr("edit"), action: onEdit).font(.subheadline).foregroundColor(.bdAccent)
+                    Button(tr("delete"), action: onDelete).font(.subheadline).foregroundColor(.statusPending)
+                }
             }
+            // In edit mode, List renders the selection circle for us —
+            // keep the row uncluttered so the selection affordance is
+            // the primary action.
         }
         .padding(14)
         .cardStyle()

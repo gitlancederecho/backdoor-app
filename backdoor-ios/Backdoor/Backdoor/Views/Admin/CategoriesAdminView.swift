@@ -1,8 +1,13 @@
 import SwiftUI
 
-/// Admin CRUD for task categories. Add / rename / reorder / delete
-/// rows in the `categories` table. Built-in rows (is_builtin=true)
-/// can still be renamed but not deleted — that's the only guardrail.
+/// Admin CRUD for task categories.
+///
+/// Normal mode: each row shows per-row Edit + Delete actions (Delete is
+/// hidden for built-ins). Tap the top-right Edit button to enter edit
+/// mode — rows gain selection circles + drag handles; a bottom bar
+/// offers bulk Delete. Built-in rows cannot be deleted individually or
+/// in bulk; the UI filters them out of the selection's effective
+/// delete set.
 struct CategoriesAdminView: View {
     @Bindable var adminVM: AdminViewModel
     @Environment(LanguageManager.self) private var lang
@@ -10,46 +15,35 @@ struct CategoriesAdminView: View {
     @State private var editingCategory: Category?
     @State private var showingNew = false
     @State private var deleteTarget: Category?
+    @State private var editMode: EditMode = .inactive
+    @State private var selectedKeys: Set<String> = []
+    @State private var showBulkDeleteConfirm = false
 
     var body: some View {
         let _ = lang.current
         ZStack(alignment: .bottomTrailing) {
-            ScrollView {
-                LazyVStack(spacing: 8) {
-                    Text(tr("categories_hint"))
-                        .font(.caption)
-                        .foregroundColor(.gray)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 16)
-                        .padding(.top, 8)
-
-                    ForEach(adminVM.categories) { cat in
-                        CategoryRow(
-                            category: cat,
-                            taskCount: adminVM.taskCountUsingCategory(cat.key),
-                            onEdit: { editingCategory = cat },
-                            onDelete: { deleteTarget = cat }
-                        )
-                        .padding(.horizontal, 16)
-                    }
-                    Spacer().frame(height: 80)
+            VStack(spacing: 0) {
+                header
+                Divider().background(Color.bdBorder)
+                categoriesList
+                if editMode.isEditing, !effectiveDeletableSelection.isEmpty {
+                    bulkActionBar
                 }
-                .padding(.top, 8)
             }
 
-            Button {
-                showingNew = true
-            } label: {
-                Image(systemName: "plus")
-                    .font(.title2.bold())
-                    .foregroundColor(.black)
-                    .frame(width: 56, height: 56)
-                    .background(Color.bdAccent)
-                    .clipShape(Circle())
-                    .shadow(color: .black.opacity(0.3), radius: 8, y: 4)
+            if !editMode.isEditing {
+                Button { showingNew = true } label: {
+                    Image(systemName: "plus")
+                        .font(.title2.bold())
+                        .foregroundColor(.black)
+                        .frame(width: 56, height: 56)
+                        .background(Color.bdAccent)
+                        .clipShape(Circle())
+                        .shadow(color: .black.opacity(0.3), radius: 8, y: 4)
+                }
+                .padding(.trailing, 20)
+                .padding(.bottom, 24)
             }
-            .padding(.trailing, 20)
-            .padding(.bottom, 24)
         }
         .sheet(isPresented: $showingNew) {
             CategoryEditorSheet(adminVM: adminVM, existing: nil)
@@ -79,6 +73,120 @@ struct CategoriesAdminView: View {
                 Text(cat.localized)
             }
         }
+        .alert(
+            tr("delete_category_confirm"),
+            isPresented: $showBulkDeleteConfirm,
+            presenting: effectiveDeletableSelection
+        ) { keys in
+            Button(String(format: tr("delete_n"), keys.count), role: .destructive) {
+                Task {
+                    await adminVM.deleteCategories(keys: keys)
+                    selectedKeys = []
+                    editMode = .inactive
+                }
+            }
+            Button(tr("cancel"), role: .cancel) {}
+        } message: { keys in
+            let totalUse = keys.reduce(0) { $0 + adminVM.taskCountUsingCategory($1) }
+            if totalUse > 0 {
+                Text(String(format: tr("delete_category_in_use_message"), totalUse))
+            } else {
+                Text(String(format: tr("delete_n_categories"), keys.count))
+            }
+        }
+    }
+
+    // MARK: - Header
+
+    private var header: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Text(tr("categories_hint"))
+                .font(.caption)
+                .foregroundColor(.gray)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button(editMode.isEditing ? tr("done") : tr("edit")) {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    if editMode.isEditing {
+                        editMode = .inactive
+                        selectedKeys = []
+                    } else {
+                        editMode = .active
+                    }
+                }
+            }
+            .font(.subheadline.weight(.semibold))
+            .foregroundColor(.bdAccent)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
+
+    // MARK: - List
+
+    private var categoriesList: some View {
+        List(selection: $selectedKeys) {
+            ForEach(adminVM.categories) { cat in
+                CategoryRow(
+                    category: cat,
+                    taskCount: adminVM.taskCountUsingCategory(cat.key),
+                    isEditing: editMode.isEditing,
+                    onEdit: { editingCategory = cat },
+                    onDelete: { deleteTarget = cat }
+                )
+                .tag(cat.key)
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+                .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                // Swipe-to-delete in normal mode for non-builtin rows.
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                    if !cat.isBuiltin {
+                        Button(role: .destructive) { deleteTarget = cat } label: {
+                            Label(tr("delete"), systemImage: "trash")
+                        }
+                    }
+                }
+            }
+            .onMove { source, destination in
+                adminVM.categories.move(fromOffsets: source, toOffset: destination)
+                Task { await adminVM.persistCategoryOrder() }
+            }
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .background(Color.bgPrimary)
+        .environment(\.editMode, $editMode)
+    }
+
+    // MARK: - Bulk action bar
+
+    private var bulkActionBar: some View {
+        HStack(spacing: 12) {
+            Text(String(format: tr("selected_count"), effectiveDeletableSelection.count))
+                .font(.subheadline)
+                .foregroundColor(.white)
+            Spacer()
+            Button {
+                showBulkDeleteConfirm = true
+            } label: {
+                Label(
+                    String(format: tr("delete_n"), effectiveDeletableSelection.count),
+                    systemImage: "trash"
+                )
+                .font(.subheadline.weight(.semibold))
+                .foregroundColor(.statusPending)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(Color.bgCard)
+        .overlay(Rectangle().frame(height: 1).foregroundColor(Color.bdBorder), alignment: .top)
+    }
+
+    /// Selection limited to non-builtin rows — built-ins aren't bulk-deletable.
+    private var effectiveDeletableSelection: [String] {
+        adminVM.categories
+            .filter { selectedKeys.contains($0.key) && !$0.isBuiltin }
+            .map(\.key)
     }
 }
 
@@ -87,6 +195,7 @@ struct CategoriesAdminView: View {
 private struct CategoryRow: View {
     let category: Category
     let taskCount: Int
+    let isEditing: Bool
     let onEdit: () -> Void
     let onDelete: () -> Void
     @Environment(LanguageManager.self) private var lang
@@ -116,16 +225,22 @@ private struct CategoryRow: View {
                     .foregroundColor(.gray)
             }
             Spacer()
-            HStack(spacing: 16) {
-                Button(tr("edit"), action: onEdit)
-                    .font(.subheadline)
-                    .foregroundColor(.bdAccent)
-                if !category.isBuiltin {
-                    Button(tr("delete"), action: onDelete)
+            if !isEditing {
+                // Normal mode: per-row edit + delete buttons.
+                HStack(spacing: 16) {
+                    Button(tr("edit"), action: onEdit)
                         .font(.subheadline)
-                        .foregroundColor(.statusPending)
+                        .foregroundColor(.bdAccent)
+                    if !category.isBuiltin {
+                        Button(tr("delete"), action: onDelete)
+                            .font(.subheadline)
+                            .foregroundColor(.statusPending)
+                    }
                 }
             }
+            // In edit mode, SwiftUI automatically renders the selection
+            // circle (from List(selection:)) and the drag handle
+            // (from .onMove), so we don't add anything extra here.
         }
         .padding(14)
         .cardStyle()
@@ -190,9 +305,6 @@ private struct CategoryEditorSheet: View {
                             .cardStyle()
                         }
 
-                        // Read-only key line (for new rows, it's derived;
-                        // for existing rows, keys are immutable since
-                        // task.category references them by value).
                         if !derivedKey.isEmpty {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(tr("category_key_label"))
