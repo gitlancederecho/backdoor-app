@@ -31,8 +31,15 @@ create table if not exists tasks (
   priority text not null default 'normal' check (priority in ('low','normal','high')),
   created_by uuid references staff(id) on delete set null,
   is_active boolean not null default true,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  -- Optional time-of-day window for when the task should be done.
+  start_time time,
+  end_time time
 );
+
+-- Idempotent add-column guards (for DBs created before these fields existed).
+alter table tasks add column if not exists start_time time;
+alter table tasks add column if not exists end_time time;
 
 create table if not exists daily_tasks (
   id uuid primary key default gen_random_uuid(),
@@ -45,12 +52,109 @@ create table if not exists daily_tasks (
   note text,
   photo_url text,
   created_at timestamptz not null default now(),
+  -- Inherited from tasks template at generation time.
+  start_time time,
+  end_time time,
+  -- Audit: who tapped Start and when (null if staff skipped straight to Complete).
+  started_by uuid references staff(id) on delete set null,
+  started_at timestamptz,
   unique (task_id, date)
 );
+
+alter table daily_tasks add column if not exists start_time time;
+alter table daily_tasks add column if not exists end_time time;
+alter table daily_tasks add column if not exists started_by uuid references staff(id) on delete set null;
+alter table daily_tasks add column if not exists started_at timestamptz;
+
+-- ---------- Task events (audit log) -------------------------------------
+-- Append-only log of every meaningful change to a daily_task. Written by
+-- the iOS client directly (no DB trigger). Enum values correspond to
+-- `TaskEventType` in Models.swift.
+create table if not exists task_events (
+  id uuid primary key default gen_random_uuid(),
+  daily_task_id uuid not null references daily_tasks(id) on delete cascade,
+  actor_id uuid references staff(id) on delete set null,
+  event_type text not null check (event_type in (
+    'created','started','completed','undone','reassigned',
+    'note_added','note_updated','photo_added'
+  )),
+  from_value text,
+  to_value text,
+  note text,
+  photo_url text,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists task_events_daily_task_idx on task_events(daily_task_id, created_at);
 
 create index if not exists daily_tasks_date_idx on daily_tasks(date);
 create index if not exists daily_tasks_assigned_idx on daily_tasks(assigned_to);
 create index if not exists tasks_active_idx on tasks(is_active) where is_active = true;
+
+-- ---------- Venue operating hours ---------------------------------------
+-- Singleton settings row governing business-day math.
+-- `prep_buffer_minutes`: how long before open_time the business day begins
+--   (so morning prep tasks appear on the same day as the evening shift).
+-- `grace_period_minutes`: how long past close_time we still consider part
+--   of the same business day (handles bars running late).
+create table if not exists venue_settings (
+  id smallint primary key check (id = 1),
+  timezone text not null default 'Asia/Tokyo',
+  -- Default matches the current operator setting (8.5 h of morning prep).
+  prep_buffer_minutes smallint not null default 510 check (prep_buffer_minutes between 0 and 720),
+  grace_period_minutes smallint not null default 120 check (grace_period_minutes between 0 and 480),
+  updated_at timestamptz not null default now()
+);
+
+insert into venue_settings (id) values (1) on conflict (id) do nothing;
+
+-- Weekly operating schedule — one row per ISO weekday (1=Mon .. 7=Sun).
+-- `close_time` may be earlier than `open_time` to indicate "closes next
+-- calendar day" (e.g. 17:00 open, 03:00 close).
+create table if not exists venue_schedule (
+  weekday smallint primary key check (weekday between 1 and 7),
+  is_closed boolean not null default false,
+  open_time time,
+  close_time time,
+  updated_at timestamptz not null default now(),
+  check (is_closed or (open_time is not null and close_time is not null))
+);
+
+-- Seed default schedule: Mon/Thu/Fri/Sat/Sun open 17:00–00:00; Tue+Wed closed.
+-- (Matches The Backdoor's actual operating week as of 2026-04.)
+-- close_time 00:00 = midnight (close_time <= open_time → "closes next calendar day").
+-- Closed days keep open/close times populated so operators can re-enable the
+-- day without re-entering times.
+insert into venue_schedule (weekday, is_closed, open_time, close_time) values
+  (1, false, '17:00:00', '00:00:00'),
+  (2, true,  '17:00:00', '03:00:00'),
+  (3, true,  '17:00:00', '03:00:00'),
+  (4, false, '17:00:00', '00:00:00'),
+  (5, false, '17:00:00', '00:00:00'),
+  (6, false, '17:00:00', '00:00:00'),
+  (7, false, '17:00:00', '00:00:00')
+on conflict (weekday) do nothing;
+
+-- Auto-touch updated_at on any change.
+create or replace function set_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+drop trigger if exists venue_settings_updated_at on venue_settings;
+create trigger venue_settings_updated_at
+  before update on venue_settings
+  for each row execute function set_updated_at();
+
+drop trigger if exists venue_schedule_updated_at on venue_schedule;
+create trigger venue_schedule_updated_at
+  before update on venue_schedule
+  for each row execute function set_updated_at();
 
 -- ---------- Helper: current staff row -----------------------------------
 create or replace function current_staff()
@@ -101,6 +205,10 @@ create trigger on_auth_user_created
 -- ---------- Generate daily_tasks from templates -------------------------
 -- Call this at the start of the day (or on demand) to materialize recurring
 -- task instances for a given date. Safe to re-run (idempotent).
+--
+-- Skips generation on days where `venue_schedule.is_closed = true` so the
+-- Hours admin hint ("tasks won't generate on closed days") is enforced at
+-- the source.
 create or replace function generate_daily_tasks(target_date date default current_date)
 returns int
 language plpgsql security definer
@@ -110,7 +218,19 @@ declare
   dow int := extract(isodow from target_date)::int; -- 1=Mon..7=Sun
   dom int := extract(day from target_date)::int;
   inserted int := 0;
+  day_closed boolean;
 begin
+  -- Honor the weekly schedule: if the venue is closed on this weekday,
+  -- don't materialize instances. Falls back to "not closed" if no schedule
+  -- row exists, preserving the pre-hours behavior.
+  select is_closed into day_closed
+  from venue_schedule
+  where weekday = dow;
+
+  if coalesce(day_closed, false) then
+    return 0;
+  end if;
+
   with eligible as (
     select t.*
     from tasks t
@@ -123,8 +243,10 @@ begin
       )
   ),
   ins as (
-    insert into daily_tasks (task_id, date, assigned_to, status)
-    select e.id, target_date, e.assigned_to, 'pending'
+    -- Copy start_time/end_time from the template so daily rows carry the
+    -- time window without a join. Clients can still edit them per-instance.
+    insert into daily_tasks (task_id, date, assigned_to, status, start_time, end_time)
+    select e.id, target_date, e.assigned_to, 'pending', e.start_time, e.end_time
     from eligible e
     on conflict (task_id, date) do nothing
     returning 1
@@ -138,6 +260,9 @@ $$;
 alter table staff enable row level security;
 alter table tasks enable row level security;
 alter table daily_tasks enable row level security;
+alter table venue_settings enable row level security;
+alter table venue_schedule enable row level security;
+alter table task_events enable row level security;
 
 -- staff: everyone authenticated can read, only admin can write
 drop policy if exists staff_read on staff;
@@ -184,10 +309,66 @@ drop policy if exists daily_delete on daily_tasks;
 create policy daily_delete on daily_tasks
   for delete using (is_admin());
 
+-- venue_settings: everyone authenticated can read; only admin can write.
+drop policy if exists venue_settings_read on venue_settings;
+create policy venue_settings_read on venue_settings
+  for select using (auth.role() = 'authenticated');
+
+drop policy if exists venue_settings_admin_write on venue_settings;
+create policy venue_settings_admin_write on venue_settings
+  for all using (is_admin()) with check (is_admin());
+
+-- venue_schedule: everyone authenticated can read; only admin can write.
+drop policy if exists venue_schedule_read on venue_schedule;
+create policy venue_schedule_read on venue_schedule
+  for select using (auth.role() = 'authenticated');
+
+drop policy if exists venue_schedule_admin_write on venue_schedule;
+create policy venue_schedule_admin_write on venue_schedule
+  for all using (is_admin()) with check (is_admin());
+
+-- task_events: append-only audit log.
+-- Everyone authenticated can read and append. Only admin can update or
+-- delete (which should be rare — this is a log).
+drop policy if exists task_events_read on task_events;
+create policy task_events_read on task_events
+  for select using (auth.role() = 'authenticated');
+
+drop policy if exists task_events_insert on task_events;
+create policy task_events_insert on task_events
+  for insert with check (auth.role() = 'authenticated');
+
+drop policy if exists task_events_admin_update on task_events;
+create policy task_events_admin_update on task_events
+  for update using (is_admin()) with check (is_admin());
+
+drop policy if exists task_events_admin_delete on task_events;
+create policy task_events_admin_delete on task_events
+  for delete using (is_admin());
+
 -- ---------- Realtime -----------------------------------------------------
 alter publication supabase_realtime add table daily_tasks;
 alter publication supabase_realtime add table tasks;
 alter publication supabase_realtime add table staff;
+
+-- Guarded publication adds so re-running this schema on an existing project
+-- doesn't error with "duplicate_object". Venue tables feed the Hours admin;
+-- task_events feeds the activity log on the task detail sheet.
+do $$
+begin
+  begin
+    alter publication supabase_realtime add table venue_settings;
+  exception when duplicate_object then null;
+  end;
+  begin
+    alter publication supabase_realtime add table venue_schedule;
+  exception when duplicate_object then null;
+  end;
+  begin
+    alter publication supabase_realtime add table task_events;
+  exception when duplicate_object then null;
+  end;
+end $$;
 
 -- ---------- Storage bucket ----------------------------------------------
 insert into storage.buckets (id, name, public)
