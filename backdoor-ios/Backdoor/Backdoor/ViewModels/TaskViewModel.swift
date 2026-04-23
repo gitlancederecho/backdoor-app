@@ -60,6 +60,22 @@ final class TaskViewModel {
         await fetchTasks()
     }
 
+    /// Swap the board to a different business-day ISO date. Cancels the
+    /// existing realtime subscription (scoped to the previous date),
+    /// re-runs generate_daily_tasks for the target, reloads, and
+    /// resubscribes on the new date's channel.
+    func setDate(_ newDate: String) async {
+        guard newDate != date else { return }
+        date = newDate
+        realtimeTask?.cancel()
+        realtimeTask = nil
+        tasks = []
+        isLoading = true
+        await generateIfNeeded()
+        await fetchTasks()
+        startRealtime()
+    }
+
     private func startRealtime() {
         realtimeTask?.cancel()
         realtimeTask = Task {

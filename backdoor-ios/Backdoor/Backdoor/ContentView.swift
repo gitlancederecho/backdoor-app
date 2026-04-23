@@ -51,12 +51,11 @@ struct MainTabView: View {
         // Re-read lang.current so tab labels refresh when the user changes language
         let _ = lang.current
         TabView {
+            // "Today" is now a single tab with an Everyone / Mine
+            // filter pill inside the view — collapsing the old Mine
+            // tab since it was just a filter on the same dataset.
             Tab(tr("tab_today"), systemImage: "checkmark.square") {
                 TaskBoardView()
-                    .environment(taskVM)
-            }
-            Tab(tr("tab_mine"), systemImage: "person.circle") {
-                TaskBoardView(filterMine: true)
                     .environment(taskVM)
             }
             if auth.isAdmin {
