@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum AdminTab: String, CaseIterable {
-    case overview, tasks, staff, hours
+    case overview, tasks, staff, hours, history
 
     var localized: String {
         switch self {
@@ -9,6 +9,7 @@ enum AdminTab: String, CaseIterable {
         case .tasks:    return tr("admin_tasks")
         case .staff:    return tr("admin_staff")
         case .hours:    return tr("admin_hours")
+        case .history:  return tr("admin_history")
         }
     }
 }
@@ -58,6 +59,7 @@ struct AdminView: View {
                 case .tasks:    TasksAdminView(adminVM: adminVM)
                 case .staff:    StaffAdminView(adminVM: adminVM)
                 case .hours:    HoursAdminView()
+                case .history:  HistoryAdminView()
                 }
             }
         }

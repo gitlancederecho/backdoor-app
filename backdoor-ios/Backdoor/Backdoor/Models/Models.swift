@@ -136,7 +136,7 @@ struct DailyTask: Codable, Identifiable {
 
 // MARK: - Audit log
 
-enum TaskEventType: String, Codable {
+enum TaskEventType: String, Codable, CaseIterable {
     case created, started, completed, undone, reassigned
     case note_added, note_updated, photo_added
 }
@@ -154,6 +154,10 @@ struct TaskEvent: Codable, Identifiable {
 
     // Joined
     var actor: Staff?
+    /// Populated when the query embeds daily_tasks (and its task template).
+    /// Lets the History view render task title + business day without
+    /// a second lookup.
+    var dailyTask: DailyTask?
 }
 
 struct NewTaskEvent: Encodable {
