@@ -202,6 +202,9 @@ private let enStrings: [String: String] = [
     "prep_buffer_hint": "How many hours before open the business day activates (for morning prep tasks).",
     "grace_period": "Overtime grace period",
     "grace_period_hint": "If the venue runs late past close time, keep staff on the same business day for this many extra minutes.",
+    "timezone": "Timezone",
+    "timezone_hint": "The venue's local time zone. Used for every business-day calculation.",
+    "search_timezone": "Search timezones",
 
     // Audit trail / history
     "history": "History",
@@ -359,6 +362,9 @@ private let jaStrings: [String: String] = [
     "prep_buffer_hint": "開店の何時間前から営業日が始まるか（朝の仕込みタスク用）。",
     "grace_period": "延長許容時間",
     "grace_period_hint": "閉店時刻を過ぎても営業が続いた場合、この分数だけ同じ営業日として扱います。",
+    "timezone": "タイムゾーン",
+    "timezone_hint": "会場のローカルタイムゾーン。すべての営業日計算に使用されます。",
+    "search_timezone": "タイムゾーンを検索",
 
     // Audit trail / history
     "history": "履歴",

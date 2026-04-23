@@ -107,10 +107,10 @@ The iOS Hours tab (`backdoor-ios/.../HoursAdminView.swift`) reads `venue_setting
 - `venue_settings`: `prep_buffer_minutes=510, grace_period_minutes=120, timezone=Asia/Tokyo`
 - `venue_schedule`: Mon/Thu/Fri/Sat/Sun open 17:00–00:00; Tue/Wed closed
 
-Known client-side gaps (not yet fixed):
-- No timezone picker in Hours admin UI.
-- Web and RN clients have no Hours feature and no business-day math — "today" diverges across platforms for late-night shifts.
-- `BusinessDay.currentBusinessDayISO` Case 1b uses a loose early-morning heuristic — fine for late-close venues, over-extends on early closes. See chat review for details.
+Known client-side gaps:
+- **Fixed** (2026-04-23): iOS Hours admin has a timezone picker (sheet with searchable IANA list).
+- **Fixed** (2026-04-23): `BusinessDay.currentBusinessDayISO` Case 1b compares `nowClock + 1440` against `closeMins + grace` in yesterday-midnight reference frame, closing the early-close false-positive window.
+- Web and RN clients have no Hours feature and no business-day math — "today" diverges across platforms for late-night shifts. Not yet addressed.
 
 ## Git
 

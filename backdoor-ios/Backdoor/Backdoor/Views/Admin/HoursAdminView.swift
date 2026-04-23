@@ -6,6 +6,7 @@ struct HoursAdminView: View {
     @Environment(LanguageManager.self) private var lang
 
     @State private var editingDay: VenueDay?
+    @State private var editingTimezone = false
     @State private var prepBufferMinutes: Int = 240
     @State private var graceMinutes: Int = 120
     @State private var isSaving = false
@@ -26,6 +27,19 @@ struct HoursAdminView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 16)
                     .padding(.top, 8)
+
+                // Timezone
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(tr("timezone"))
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.gray)
+                        .tracking(1.2)
+                    Text(tr("timezone_hint"))
+                        .font(.caption2)
+                        .foregroundColor(.gray)
+                    timezoneRow()
+                }
+                .padding(.horizontal, 16)
 
                 // Weekday rows
                 LazyVStack(spacing: 8) {
@@ -106,6 +120,11 @@ struct HoursAdminView: View {
                 .environment(venue)
                 .environment(lang)
         }
+        .sheet(isPresented: $editingTimezone) {
+            TimezonePickerSheet(current: venue.settings.timezone)
+                .environment(venue)
+                .environment(lang)
+        }
         .onAppear {
             prepBufferMinutes = Int(venue.settings.prepBufferMinutes)
             graceMinutes = Int(venue.settings.gracePeriodMinutes)
@@ -124,6 +143,29 @@ struct HoursAdminView: View {
         if h == 0 { return "\(m)m" }
         if m == 0 { return "\(h)h" }
         return "\(h)h \(m)m"
+    }
+
+    @ViewBuilder
+    private func timezoneRow() -> some View {
+        let tzId = venue.settings.timezone
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(tzId)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(.white)
+                if let offset = TimezoneUtil.offsetLabel(for: tzId) {
+                    Text(offset)
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                }
+            }
+            Spacer()
+            Button(tr("edit")) { editingTimezone = true }
+                .font(.subheadline)
+                .foregroundColor(.bdAccent)
+        }
+        .padding(14)
+        .cardStyle()
     }
 
     @ViewBuilder
@@ -291,5 +333,99 @@ private struct DayScheduleSheet: View {
             Text(label).font(.caption).foregroundColor(.gray)
             content()
         }
+    }
+}
+
+// MARK: - Timezone utilities
+
+enum TimezoneUtil {
+    /// "JST · UTC+9" or "UTC-03:30" — returns nil for unknown identifiers.
+    static func offsetLabel(for identifier: String) -> String? {
+        guard let tz = TimeZone(identifier: identifier) else { return nil }
+        let seconds = tz.secondsFromGMT()
+        let h = seconds / 3600
+        let m = abs(seconds % 3600) / 60
+        let sign = seconds >= 0 ? "+" : "-"
+        let offset = m == 0
+            ? "UTC\(sign)\(abs(h))"
+            : "UTC\(sign)\(abs(h)):\(String(format: "%02d", m))"
+        let abbr = tz.abbreviation() ?? ""
+        return abbr.isEmpty ? offset : "\(abbr) · \(offset)"
+    }
+}
+
+// MARK: - Timezone picker sheet
+
+private struct TimezonePickerSheet: View {
+    let current: String
+    @Environment(VenueViewModel.self) private var venue
+    @Environment(LanguageManager.self) private var lang
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var selected: String = ""
+    @State private var query = ""
+    @State private var isSaving = false
+
+    private var filtered: [String] {
+        let all = TimeZone.knownTimeZoneIdentifiers.sorted()
+        guard !query.isEmpty else { return all }
+        return all.filter { $0.localizedCaseInsensitiveContains(query) }
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color.bgPrimary.ignoresSafeArea()
+                List {
+                    ForEach(filtered, id: \.self) { tz in
+                        row(tz)
+                            .listRowBackground(Color.bgCard)
+                    }
+                }
+                .scrollContentBackground(.hidden)
+            }
+            .searchable(text: $query, prompt: tr("search_timezone"))
+            .navigationTitle(tr("timezone"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Color.bgCard, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(tr("cancel")) { dismiss() }.foregroundColor(.gray)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(tr("save")) { Task { await save() } }
+                        .foregroundColor(.bdAccent)
+                        .disabled(isSaving || selected == current)
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+        .onAppear { selected = current }
+    }
+
+    @ViewBuilder
+    private func row(_ tz: String) -> some View {
+        Button { selected = tz } label: {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(tz).foregroundColor(.white)
+                    if let offset = TimezoneUtil.offsetLabel(for: tz) {
+                        Text(offset).font(.caption).foregroundColor(.gray)
+                    }
+                }
+                Spacer()
+                if selected == tz {
+                    Image(systemName: "checkmark").foregroundColor(.bdAccent)
+                }
+            }
+        }
+    }
+
+    private func save() async {
+        isSaving = true
+        try? await venue.updateSettings(timezone: selected)
+        isSaving = false
+        dismiss()
     }
 }

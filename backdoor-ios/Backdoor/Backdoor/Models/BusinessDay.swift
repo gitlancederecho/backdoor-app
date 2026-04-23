@@ -80,18 +80,22 @@ enum BusinessDay {
             return iso(yesterday, tz: tz)
         }
 
-        // Case 1b: yesterday's shift ended same-calendar-day but we're still within grace
-        // (handles a bar that closes at e.g. 23:30 and runs 30 min late)
-        // We check this by seeing if we're early morning (past midnight) and yesterday's shift
-        // close_time is late enough that close+grace reaches into today.
-        // Simpler heuristic: if within first `grace` minutes of today AND yesterday was open,
-        // we may still be wrapping up yesterday's shift.
-        if nowClock < grace,
-           let y = yesterdayDay, !y.isClosed {
-            // Only if yesterday DIDN'T cross midnight (otherwise Case 1a already handles)
-            if !y.closesNextCalendarDay {
-                return iso(yesterday, tz: tz)
-            }
+        // Case 1b: yesterday's shift ended same-calendar-day but close+grace
+        // extends past midnight into today. Put both sides of the comparison
+        // in the same reference frame ("minutes past yesterday's midnight"):
+        //   now side  = nowClock + 1440 (today's minutes + 24h)
+        //   close side = closeMins + grace (same-calendar-day close + grace)
+        //
+        // Example: yesterday closed 18:00 (early-close shift), grace = 120.
+        // True end of business day = 20:00 yesterday = 1200 min. At 01:30 today
+        // now-side = 90 + 1440 = 1530 > 1200 → correctly returns false and we
+        // fall through to Case 2/3 instead of erroneously returning yesterday.
+        if let y = yesterdayDay,
+           !y.isClosed,
+           !y.closesNextCalendarDay, // Case 1a already handles midnight-crossing shifts
+           let closeMins = y.closeTime.flatMap(TimeOfDay.minutesFromMidnight),
+           (nowClock + 24 * 60) < (closeMins + grace) {
+            return iso(yesterday, tz: tz)
         }
 
         // Case 2: today has an open shift and we're within prep window or past open
