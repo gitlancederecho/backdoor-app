@@ -206,6 +206,7 @@ private let enStrings: [String: String] = [
     "timezone_hint": "The venue's local time zone. Used for every business-day calculation.",
     "search_timezone": "Search timezones",
     "operating_hours": "Operating hours",
+    "next_day_label": "next day",
 
     // Audit trail / history
     "history": "History",
@@ -367,6 +368,7 @@ private let jaStrings: [String: String] = [
     "timezone_hint": "会場のローカルタイムゾーン。すべての営業日計算に使用されます。",
     "search_timezone": "タイムゾーンを検索",
     "operating_hours": "営業時間",
+    "next_day_label": "翌日",
 
     // Audit trail / history
     "history": "履歴",

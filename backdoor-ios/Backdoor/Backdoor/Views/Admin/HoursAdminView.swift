@@ -188,9 +188,20 @@ struct HoursAdminView: View {
                     .foregroundColor(.statusPending)
                     .clipShape(Capsule())
             } else if let o = day.openTime, let c = day.closeTime {
-                Text("\(TimeOfDay.displayString(from: o)) – \(TimeOfDay.displayString(from: c))\(day.closesNextCalendarDay ? " +1" : "")")
-                    .font(.subheadline)
-                    .foregroundColor(.white)
+                HStack(spacing: 6) {
+                    Text("\(TimeOfDay.displayString(from: o)) – \(TimeOfDay.displayString(from: c))")
+                        .font(.subheadline)
+                        .foregroundColor(.white)
+                    if day.closesNextCalendarDay {
+                        Text(tr("next_day_label"))
+                            .font(.caption2)
+                            .foregroundColor(.gray)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.gray.opacity(0.15))
+                            .clipShape(Capsule())
+                    }
+                }
             } else {
                 Text("—").foregroundColor(.gray)
             }
