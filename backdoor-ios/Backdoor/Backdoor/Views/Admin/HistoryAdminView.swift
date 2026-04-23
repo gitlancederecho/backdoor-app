@@ -6,6 +6,7 @@ struct HistoryAdminView: View {
     @Environment(AdminViewModel.self) private var adminVM
     @Environment(LanguageManager.self) private var lang
     @State private var vm = HistoryViewModel()
+    @State private var selectedTask: DailyTask?
 
     var body: some View {
         let _ = lang.current
@@ -31,6 +32,12 @@ struct HistoryAdminView: View {
         }
         .task { await vm.load() }
         .refreshable { await vm.refresh() }
+        .sheet(item: $selectedTask) { task in
+            TaskCompletionSheet(task: task, isPresented: .init(
+                get: { selectedTask != nil },
+                set: { if !$0 { selectedTask = nil } }
+            ))
+        }
     }
 
     // MARK: - Filter bar
@@ -224,51 +231,68 @@ struct HistoryAdminView: View {
 
     @ViewBuilder
     private func eventRow(_ e: TaskEvent) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            AvatarView(initials: e.actor?.initials ?? "?", url: e.actor?.avatarUrl, size: 32)
+        let canOpen = e.dailyTask != nil
+        Button {
+            if let dt = e.dailyTask { selectedTask = dt }
+        } label: {
+            HStack(alignment: .top, spacing: 10) {
+                AvatarView(initials: e.actor?.initials ?? "?", url: e.actor?.avatarUrl, size: 32)
 
-            VStack(alignment: .leading, spacing: 4) {
-                // Title line: actor, verb, task title
-                HStack(spacing: 6) {
-                    Text(e.actor?.name ?? "—")
-                        .font(.subheadline.weight(.medium))
-                        .foregroundColor(.white)
-                    verbBadge(e.eventType)
+                VStack(alignment: .leading, spacing: 4) {
+                    // Title line: actor, verb, task title
+                    HStack(spacing: 6) {
+                        Text(e.actor?.name ?? "—")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundColor(.white)
+                        verbBadge(e.eventType)
+                    }
+
+                    if let taskTitle = e.dailyTask?.task?.title, !taskTitle.isEmpty {
+                        Text(taskTitle)
+                            .font(.subheadline)
+                            .foregroundColor(.white.opacity(0.9))
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                    }
+
+                    // from → to for reassignments
+                    if e.eventType == .reassigned,
+                       let toId = e.toValue, let toUUID = UUID(uuidString: toId) {
+                        let toName = adminVM.allStaff.first(where: { $0.id == toUUID })?.name ?? "—"
+                        Text("→ \(toName)")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                    }
+
+                    // Optional note preview
+                    if let note = e.note, !note.isEmpty {
+                        Text(note)
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                    }
                 }
 
-                if let taskTitle = e.dailyTask?.task?.title, !taskTitle.isEmpty {
-                    Text(taskTitle)
-                        .font(.subheadline)
-                        .foregroundColor(.white.opacity(0.9))
-                        .lineLimit(2)
-                }
+                Spacer()
 
-                // from → to for reassignments
-                if e.eventType == .reassigned,
-                   let toId = e.toValue, let toUUID = UUID(uuidString: toId) {
-                    let toName = adminVM.allStaff.first(where: { $0.id == toUUID })?.name ?? "—"
-                    Text("→ \(toName)")
-                        .font(.caption)
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text(timeString(e.createdAt))
+                        .font(.caption2.monospacedDigit())
                         .foregroundColor(.gray)
-                }
-
-                // Optional note preview
-                if let note = e.note, !note.isEmpty {
-                    Text(note)
-                        .font(.caption)
-                        .foregroundColor(.gray)
-                        .lineLimit(2)
+                    if canOpen {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(.gray.opacity(0.5))
+                    }
                 }
             }
-
-            Spacer()
-
-            Text(timeString(e.createdAt))
-                .font(.caption2.monospacedDigit())
-                .foregroundColor(.gray)
+            .padding(12)
+            .cardStyle()
+            .contentShape(Rectangle())
         }
-        .padding(12)
-        .cardStyle()
+        .buttonStyle(.plain)
+        .disabled(!canOpen)
     }
 
     private func verbBadge(_ type: TaskEventType) -> some View {

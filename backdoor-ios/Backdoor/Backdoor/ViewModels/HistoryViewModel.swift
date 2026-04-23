@@ -55,10 +55,23 @@ final class HistoryViewModel {
 
         // Build the query. PostgREST chaining returns a new builder each
         // step, so we hold it in a single variable and overwrite.
+        // The nested embeds on daily_tasks mirror TaskViewModel.fetchTasks
+        // so the TaskCompletionSheet (opened on row tap) renders without
+        // a second round-trip for assignee / starter / completer.
         var q = supabase
             .from("task_events")
             .select(
-                "*, actor:staff!task_events_actor_id_fkey(*), dailyTask:daily_tasks(*, task:tasks(*))"
+                """
+                *,
+                actor:staff!task_events_actor_id_fkey(*),
+                dailyTask:daily_tasks(
+                    *,
+                    task:tasks(*),
+                    assignee:staff!daily_tasks_assigned_to_fkey(*),
+                    starter:staff!daily_tasks_started_by_fkey(*),
+                    completer:staff!daily_tasks_completed_by_fkey(*)
+                )
+                """
             )
 
         if let start = dateRange.startDate() {
