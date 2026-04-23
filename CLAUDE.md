@@ -20,9 +20,11 @@ Credentials live in `.env` (gitignored):
 | --- | --- | --- |
 | `VITE_SUPABASE_URL` | public | Base URL |
 | `VITE_SUPABASE_ANON_KEY` | public | Client reads/writes (RLS enforced) |
-| `SUPABASE_SERVICE_ROLE_KEY` | **secret** | Admin SQL, schema introspection, bypasses RLS |
+| `SUPABASE_SERVICE_ROLE_KEY` | **secret** | Admin SQL via PostgREST, bypasses RLS |
+| `SUPABASE_MANAGEMENT_PAT` | **secret** | Arbitrary SQL + DDL via Management API |
+| `SUPABASE_PROJECT_REF` | config | Project ref string (path segment in URLs) |
 
-### Introspection recipes
+### Introspection recipes (read-only)
 
 OpenAPI (full schema — tables, columns, constraints, RPCs):
 ```bash
@@ -39,11 +41,45 @@ curl -s -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
      "$VITE_SUPABASE_URL/rest/v1/<table>?select=*"
 ```
 
-The anon key can't hit `/rest/v1/` (root requires secret key) and RLS blocks anon from reading `venue_*`, `task_events`, etc. Always use the service role key for admin work.
+### DDL + arbitrary SQL via Management API
+
+Use this whenever a change can't go through PostgREST (schema migrations,
+reading function bodies, inspecting triggers, RLS audits). Cloudflare
+rejects Python's default User-Agent on `api.supabase.com` — `curl` works:
+
+```bash
+set -a; source .env; set +a
+
+# Wrap the SQL in a JSON body (single-quotes + backslash escaping is a
+# pain, so let Python handle it):
+python3 -c "import json,sys; print(json.dumps({'query': sys.argv[1]}))" \
+  "select pg_get_functiondef('generate_daily_tasks(date)'::regprocedure)" \
+  > /tmp/q.json
+
+curl -s -X POST \
+  "https://api.supabase.com/v1/projects/$SUPABASE_PROJECT_REF/database/query" \
+  -H "Authorization: Bearer $SUPABASE_MANAGEMENT_PAT" \
+  -H "Content-Type: application/json" \
+  --data @/tmp/q.json
+```
+
+For applying the full schema:
+```bash
+python3 -c "import json; sql=open('supabase/schema.sql').read(); print(json.dumps({'query': sql}))" > /tmp/schema_payload.json
+curl -s -X POST "https://api.supabase.com/v1/projects/$SUPABASE_PROJECT_REF/database/query" \
+  -H "Authorization: Bearer $SUPABASE_MANAGEMENT_PAT" \
+  -H "Content-Type: application/json" \
+  --data @/tmp/schema_payload.json
+```
+
+The anon key can't hit `/rest/v1/` root (requires secret key) and RLS
+blocks anon reads from `task_events` and most other tables. For any
+administrative task, pick the service role key (REST-level) or the
+management PAT (SQL-level).
 
 ## Schema status
 
-**As of 2026-04-23, `supabase/schema.sql` mirrors the live DB.** All previously drifted surfaces have been reconciled:
+**As of 2026-04-23, `supabase/schema.sql` mirrors the live DB and has been applied.** All previously drifted surfaces are reconciled:
 
 - `tasks.start_time`, `tasks.end_time`
 - `daily_tasks.start_time`, `.end_time`, `.started_by`, `.started_at`

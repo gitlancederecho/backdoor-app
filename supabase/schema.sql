@@ -264,7 +264,9 @@ alter table venue_settings enable row level security;
 alter table venue_schedule enable row level security;
 alter table task_events enable row level security;
 
--- staff: everyone authenticated can read, only admin can write
+-- staff: everyone authenticated can read; admin can write anything;
+-- anyone can update their own row, but NOT change their role or is_active
+-- (prevents self-promotion). Admin retains full control via staff_admin_write.
 drop policy if exists staff_read on staff;
 create policy staff_read on staff
   for select using (auth.role() = 'authenticated');
@@ -272,6 +274,15 @@ create policy staff_read on staff
 drop policy if exists staff_admin_write on staff;
 create policy staff_admin_write on staff
   for all using (is_admin()) with check (is_admin());
+
+drop policy if exists staff_update_self on staff;
+create policy staff_update_self on staff
+  for update using (auth_user_id = auth.uid())
+  with check (
+    auth_user_id = auth.uid()
+    and role = (select role from staff where auth_user_id = auth.uid())
+    and is_active = (select is_active from staff where auth_user_id = auth.uid())
+  );
 
 -- tasks: everyone authenticated can read, only admin can write
 drop policy if exists tasks_read on tasks;
@@ -328,15 +339,20 @@ create policy venue_schedule_admin_write on venue_schedule
   for all using (is_admin()) with check (is_admin());
 
 -- task_events: append-only audit log.
--- Everyone authenticated can read and append. Only admin can update or
--- delete (which should be rare — this is a log).
+-- Everyone authenticated can read. Authenticated users can insert as long
+-- as actor_id is null (system) or matches their own staff.id (no
+-- impersonation). Only admin can update or delete — rewriting the log
+-- should be exceptional.
 drop policy if exists task_events_read on task_events;
 create policy task_events_read on task_events
   for select using (auth.role() = 'authenticated');
 
 drop policy if exists task_events_insert on task_events;
 create policy task_events_insert on task_events
-  for insert with check (auth.role() = 'authenticated');
+  for insert with check (
+    actor_id is null
+    or actor_id = (select id from staff where auth_user_id = auth.uid())
+  );
 
 drop policy if exists task_events_admin_update on task_events;
 create policy task_events_admin_update on task_events
@@ -347,26 +363,27 @@ create policy task_events_admin_delete on task_events
   for delete using (is_admin());
 
 -- ---------- Realtime -----------------------------------------------------
-alter publication supabase_realtime add table daily_tasks;
-alter publication supabase_realtime add table tasks;
-alter publication supabase_realtime add table staff;
-
--- Guarded publication adds so re-running this schema on an existing project
--- doesn't error with "duplicate_object". Venue tables feed the Hours admin;
--- task_events feeds the activity log on the task detail sheet.
+-- Guarded publication adds — safe to re-run. Every table that a client
+-- subscribes to via Supabase Realtime goes here.
 do $$
 begin
-  begin
-    alter publication supabase_realtime add table venue_settings;
-  exception when duplicate_object then null;
+  begin alter publication supabase_realtime add table staff;
+    exception when duplicate_object then null;
   end;
-  begin
-    alter publication supabase_realtime add table venue_schedule;
-  exception when duplicate_object then null;
+  begin alter publication supabase_realtime add table tasks;
+    exception when duplicate_object then null;
   end;
-  begin
-    alter publication supabase_realtime add table task_events;
-  exception when duplicate_object then null;
+  begin alter publication supabase_realtime add table daily_tasks;
+    exception when duplicate_object then null;
+  end;
+  begin alter publication supabase_realtime add table task_events;
+    exception when duplicate_object then null;
+  end;
+  begin alter publication supabase_realtime add table venue_settings;
+    exception when duplicate_object then null;
+  end;
+  begin alter publication supabase_realtime add table venue_schedule;
+    exception when duplicate_object then null;
   end;
 end $$;
 
