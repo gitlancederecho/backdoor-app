@@ -41,6 +41,10 @@ final class HistoryViewModel {
     var selectedActorId: UUID? = nil {
         didSet { if selectedActorId != oldValue { Task { await load() } } }
     }
+    /// Free-text search — filtered client-side over already-fetched
+    /// events (server-side would need a view or RPC since we'd match
+    /// through the joined daily_task → task title).
+    var searchText: String = ""
 
     /// Cap the result size so the list stays snappy on "all" + busy projects.
     /// 500 events ≈ a month of moderate activity.
@@ -116,7 +120,21 @@ final class HistoryViewModel {
 
     func refresh() async { await load() }
 
-    // MARK: - Grouping
+    // MARK: - Search + Grouping
+
+    /// Events narrowed by the free-text search. If `searchText` is
+    /// empty returns the full list.
+    var filteredEvents: [TaskEvent] {
+        let q = searchText.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return events }
+        return events.filter { e in
+            if let n = e.note, n.localizedCaseInsensitiveContains(q) { return true }
+            if let t = e.dailyTask?.task?.title, t.localizedCaseInsensitiveContains(q) { return true }
+            if let t = e.dailyTask?.task?.titleJa, t.localizedCaseInsensitiveContains(q) { return true }
+            if let name = e.actor?.name, name.localizedCaseInsensitiveContains(q) { return true }
+            return false
+        }
+    }
 
     /// Grouped by the ISO date of `created_at` (venue-agnostic calendar
     /// date in the user's local tz). Sorted descending (newest day first).
@@ -126,7 +144,7 @@ final class HistoryViewModel {
         df.locale = Locale(identifier: "en_US_POSIX")
 
         var buckets: [String: [TaskEvent]] = [:]
-        for e in events {
+        for e in filteredEvents {
             let key = df.string(from: e.createdAt)
             buckets[key, default: []].append(e)
         }

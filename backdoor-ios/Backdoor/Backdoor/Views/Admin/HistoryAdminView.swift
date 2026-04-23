@@ -26,7 +26,9 @@ struct HistoryAdminView: View {
                     // have nothing to show. A transient error during
                     // refresh shouldn't blank the list.
                     errorState(err)
-                } else if vm.events.isEmpty {
+                } else if vm.groupedByDate.isEmpty {
+                    // Covers both "no fetched events" and "search
+                    // narrowed to zero matches" with the same UI.
                     emptyState
                 } else {
                     eventList
@@ -47,6 +49,14 @@ struct HistoryAdminView: View {
 
     private var filterBar: some View {
         VStack(alignment: .leading, spacing: 10) {
+            SearchField(
+                prompt: tr("search_history"),
+                text: Binding(
+                    get: { vm.searchText },
+                    set: { vm.searchText = $0 }
+                )
+            )
+
             // Date range pills
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
