@@ -93,10 +93,24 @@ final class HistoryViewModel {
                 .limit(fetchLimit)
                 .execute()
                 .value
+            // A fresh refresh could have been fired while we were
+            // awaiting — don't clobber the newer result with ours.
+            guard !Task.isCancelled else { return }
             events = result
+        } catch is CancellationError {
+            // SwiftUI may cancel the .refreshable task when the view
+            // re-renders (filter change, observable mutation, parent
+            // invalidation). Leave existing state alone — another load
+            // will follow.
+            return
+        } catch let urlErr as URLError where urlErr.code == .cancelled {
+            // URLSession reports cancellation via URLError; same
+            // semantics as Swift's CancellationError for our purposes.
+            return
         } catch {
             self.error = error.localizedDescription
-            events = []
+            // Keep the previous events so pull-to-refresh doesn't blank
+            // the list on a transient failure.
         }
     }
 

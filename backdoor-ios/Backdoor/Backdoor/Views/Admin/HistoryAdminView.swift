@@ -21,7 +21,10 @@ struct HistoryAdminView: View {
 
                 if vm.isLoading && vm.events.isEmpty {
                     loadingState
-                } else if let err = vm.error {
+                } else if let err = vm.error, vm.events.isEmpty {
+                    // Only flip to the full-screen error state when we
+                    // have nothing to show. A transient error during
+                    // refresh shouldn't blank the list.
                     errorState(err)
                 } else if vm.events.isEmpty {
                     emptyState
