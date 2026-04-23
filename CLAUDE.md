@@ -112,6 +112,27 @@ Known client-side gaps:
 - **Fixed** (2026-04-23): `BusinessDay.currentBusinessDayISO` Case 1b compares `nowClock + 1440` against `closeMins + grace` in yesterday-midnight reference frame, closing the early-close false-positive window.
 - Web and RN clients have no Hours feature and no business-day math — "today" diverges across platforms for late-night shifts. Not yet addressed.
 
+## One-off task lifecycle policy
+
+Non-recurring (`is_recurring = false`) templates are auto-soft-deleted
+when their last non-completed `daily_task` flips to `completed`. The
+iOS client (`TaskViewModel.complete` → `maybeAutoRetireOneOff`):
+
+- Sets `tasks.is_active = false`
+- Logs a template-level `task_events` row with `daily_task_id = null`,
+  `event_type = 'deleted'`, `from_value = templateId`, `note = title`
+
+Symmetric: `TaskViewModel.undo` on a completion calls
+`maybeRestoreRetiredOneOff`, which re-fetches the template's current
+`is_active` (the in-memory snapshot may be stale), flips it back to
+`true` if currently inactive, and logs an `undone` event.
+
+Recurring templates are never touched by this logic.
+
+`AdminViewModel.fetchAll` now relies on the DB-level `is_active = true`
+filter alone — the former `hideCompletedOneOffs` client-side pass is
+gone.
+
 ## Git
 
 - Remote: `git@github.com:gitlancederecho/backdoor-app.git` (SSH; HTTPS credentials not configured).

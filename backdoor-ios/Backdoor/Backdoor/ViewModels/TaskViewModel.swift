@@ -92,6 +92,11 @@ final class TaskViewModel {
         try await applyPatch(id: task.id, patch: patch)
         await logEvent(dailyTaskId: task.id, actorId: staffId, type: .completed,
                        note: cleanNote, photoUrl: photoUrl)
+
+        // One-off templates are "done" once their last daily_task is
+        // completed. Auto-soft-delete + log a template-level deleted
+        // event so the History tab reflects the full lifecycle.
+        await maybeAutoRetireOneOff(template: task.task, actorId: staffId)
     }
 
     func start(task: DailyTask, staffId: UUID) async throws {
@@ -112,6 +117,11 @@ final class TaskViewModel {
         // This is why the audit log is useful: admins can see the undo.
         let actor = await currentStaffId()
         await logEvent(dailyTaskId: task.id, actorId: actor, type: .undone)
+
+        // Symmetric to the auto-retire on complete: if this daily_task
+        // belongs to an auto-retired one-off template, bring the
+        // template back to active.
+        await maybeRestoreRetiredOneOff(template: task.task, actorId: actor)
     }
 
     private func applyPatch(id: UUID, patch: DailyTaskPatch) async throws {
@@ -130,6 +140,76 @@ final class TaskViewModel {
             .update(patch)
             .eq("id", value: id)
             .execute()
+    }
+
+    // MARK: - Auto-retire one-off templates
+
+    /// When the last non-completed daily_task of a non-recurring template
+    /// flips to `completed`, soft-delete the template and log a
+    /// template-level `deleted` event. No-op for recurring templates and
+    /// when other non-completed rows still exist.
+    private func maybeAutoRetireOneOff(template: TaskTemplate?, actorId: UUID?) async {
+        guard let template, !template.isRecurring else { return }
+
+        struct MiniDT: Decodable { let id: UUID }
+        let remaining: [MiniDT] = (try? await supabase
+            .from("daily_tasks")
+            .select("id")
+            .eq("task_id", value: template.id)
+            .neq("status", value: TaskStatus.completed.rawValue)
+            .execute()
+            .value) ?? []
+        guard remaining.isEmpty else { return }
+
+        _ = try? await supabase
+            .from("tasks")
+            .update(["is_active": false])
+            .eq("id", value: template.id)
+            .execute()
+
+        let event = NewTaskEvent(
+            dailyTaskId: nil,
+            actorId: actorId,
+            eventType: TaskEventType.deleted.rawValue,
+            fromValue: template.id.uuidString,
+            toValue: nil,
+            note: template.title,
+            photoUrl: nil
+        )
+        _ = try? await supabase.from("task_events").insert(event).execute()
+    }
+
+    /// Symmetric restore for `undo` on a completion. Re-fetches the
+    /// template's current is_active (the in-memory `task.task` snapshot
+    /// may still read as active from the pre-completion fetch).
+    private func maybeRestoreRetiredOneOff(template: TaskTemplate?, actorId: UUID?) async {
+        guard let template, !template.isRecurring else { return }
+
+        let current: TaskTemplate? = try? await supabase
+            .from("tasks")
+            .select()
+            .eq("id", value: template.id)
+            .single()
+            .execute()
+            .value
+        guard let t = current, !t.isActive else { return }
+
+        _ = try? await supabase
+            .from("tasks")
+            .update(["is_active": true])
+            .eq("id", value: template.id)
+            .execute()
+
+        let event = NewTaskEvent(
+            dailyTaskId: nil,
+            actorId: actorId,
+            eventType: TaskEventType.undone.rawValue,
+            fromValue: nil,
+            toValue: template.id.uuidString,
+            note: template.title,
+            photoUrl: nil
+        )
+        _ = try? await supabase.from("task_events").insert(event).execute()
     }
 
     // MARK: - Audit log

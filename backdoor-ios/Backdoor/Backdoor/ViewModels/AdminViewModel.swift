@@ -21,6 +21,9 @@ final class AdminViewModel {
             .order("name")
             .execute()
             .value) ?? []
+        // Non-recurring templates auto-soft-delete on final completion
+        // (handled in TaskViewModel), so `is_active = true` alone now
+        // gives us the set of "templates still worth managing."
         async let tasksResult: [TaskTemplate] = (try? supabase
             .from("tasks")
             .select()
@@ -29,51 +32,8 @@ final class AdminViewModel {
             .execute()
             .value) ?? []
         allStaff = await staffResult
-        let allTemplates = await tasksResult
-
-        // One-off (non-recurring) templates are meant to exist until
-        // their single daily_task gets completed. Once that's done, hide
-        // them from the Tasks admin list so the UI stays focused on work
-        // that still needs managing. The template itself stays in the DB
-        // (and still appears in History) — we just filter the view.
-        taskTemplates = await hideCompletedOneOffs(allTemplates)
+        taskTemplates = await tasksResult
         isLoading = false
-    }
-
-    /// Given a list of active templates, drop any non-recurring ones
-    /// whose daily_tasks exist AND are all completed. Recurring templates,
-    /// and one-offs with no materialized rows yet, always stay.
-    private func hideCompletedOneOffs(_ templates: [TaskTemplate]) async -> [TaskTemplate] {
-        let oneOffIds = templates.filter { !$0.isRecurring }.map(\.id)
-        guard !oneOffIds.isEmpty else { return templates }
-
-        struct MiniDT: Decodable {
-            let taskId: UUID?
-            let status: TaskStatus
-        }
-        let dts: [MiniDT] = (try? await supabase
-            .from("daily_tasks")
-            .select("task_id, status")
-            .in("task_id", values: oneOffIds.map(\.uuidString))
-            .execute()
-            .value) ?? []
-
-        // Bucket by template id, then find templates where at least one
-        // row exists AND every row is completed.
-        var byTemplate: [UUID: [TaskStatus]] = [:]
-        for dt in dts {
-            guard let tid = dt.taskId else { continue }
-            byTemplate[tid, default: []].append(dt.status)
-        }
-        let finishedOneOffs: Set<UUID> = Set(
-            byTemplate
-                .filter { _, statuses in
-                    !statuses.isEmpty && statuses.allSatisfy { $0 == .completed }
-                }
-                .map(\.key)
-        )
-
-        return templates.filter { !finishedOneOffs.contains($0.id) }
     }
 
     // MARK: - Task CRUD
