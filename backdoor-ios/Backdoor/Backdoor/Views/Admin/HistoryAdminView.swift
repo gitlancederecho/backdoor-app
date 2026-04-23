@@ -257,7 +257,7 @@ struct HistoryAdminView: View {
                         Text(e.actor?.name ?? "—")
                             .font(.subheadline.weight(.medium))
                             .foregroundColor(.white)
-                        verbBadge(e.eventType)
+                        verbBadge(e)
                     }
 
                     // Title preference:
@@ -317,18 +317,21 @@ struct HistoryAdminView: View {
         .disabled(!canOpen)
     }
 
-    private func verbBadge(_ type: TaskEventType) -> some View {
+    private func verbBadge(_ e: TaskEvent) -> some View {
         let color: Color = {
-            switch type {
+            switch e.eventType {
             case .completed:    return .statusDone
             case .started:      return .statusProgress
-            case .undone:       return .statusPending
+            case .undone:
+                // Template restore (daily_task_id null) is a positive
+                // reversal; completion undo is a warning color.
+                return e.dailyTaskId == nil ? .statusDone : .statusPending
             case .reassigned:   return .bdAccent
             case .deleted:      return .statusPending
             case .created, .note_added, .note_updated, .photo_added: return .gray
             }
         }()
-        return Text(verb(for: type))
+        return Text(verb(for: e))
             .font(.caption2.weight(.semibold))
             .foregroundColor(color)
             .padding(.horizontal, 8).padding(.vertical, 2)
@@ -347,6 +350,8 @@ struct HistoryAdminView: View {
         }
     }
 
+    /// Default verb for a bare event-type (used by filter UI where we
+    /// don't have a concrete event instance).
     private func verb(for type: TaskEventType) -> String {
         switch type {
         case .created:      return tr("event_created")
@@ -359,6 +364,17 @@ struct HistoryAdminView: View {
         case .photo_added:  return tr("event_photo_added")
         case .deleted:      return tr("event_deleted")
         }
+    }
+
+    /// Concrete-event verb that disambiguates the two flavors of
+    /// `undone`: template-level restores (no daily_task_id) show as
+    /// "Restored" so the History log distinguishes them from completion
+    /// undos on the same row card.
+    private func verb(for event: TaskEvent) -> String {
+        if event.eventType == .undone && event.dailyTaskId == nil {
+            return tr("event_restored")
+        }
+        return verb(for: event.eventType)
     }
 
     private func friendlyDateLabel(_ iso: String) -> String {
