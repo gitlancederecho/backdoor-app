@@ -299,15 +299,20 @@ $$;
 
 -- ---------- Profile stats RPC -------------------------------------------
 -- One round-trip for the Profile tab: counts for today / this week /
--- all-time completions plus in-progress right now. Uses auth.uid() via
--- a staff-row lookup so callers don't pass their own id.
-create or replace function my_profile_stats()
+-- all-time completions plus in-progress right now. Optional `target`
+-- lets the iOS client view another staff member's stats (People
+-- search); if null the caller's own staff row is used.
+drop function if exists my_profile_stats();
+create or replace function profile_stats(target uuid default null)
 returns jsonb
 language sql stable security definer
 set search_path = public
 as $$
   with me as (
-    select id from staff where auth_user_id = auth.uid() limit 1
+    select coalesce(
+      target,
+      (select id from staff where auth_user_id = auth.uid())
+    ) as id
   )
   select jsonb_build_object(
     'today_assigned', (

@@ -145,9 +145,13 @@ struct TaskBoardView: View {
                                     .foregroundColor(.gray)
                             }
                             Spacer()
-                            ProfileMenu()
-                                .environment(auth)
-                                .environment(lang)
+                            HStack(spacing: 12) {
+                                PeopleSearchButton()
+                                    .environment(lang)
+                                ProfileMenu()
+                                    .environment(auth)
+                                    .environment(lang)
+                            }
                         }
                         .padding(.horizontal, 16)
                         .padding(.top, 8)
@@ -202,6 +206,32 @@ struct TaskBoardView: View {
             .environment(auth)
             .environment(vm)
             .environment(lang)
+        }
+    }
+}
+
+/// People search entry — same visual weight as the avatar next to it.
+/// Tap opens the PeopleSheet.
+private struct PeopleSearchButton: View {
+    @Environment(LanguageManager.self) private var lang
+    @State private var showingPeople = false
+
+    var body: some View {
+        let _ = lang.current
+        Button {
+            showingPeople = true
+        } label: {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundColor(.gray)
+                .frame(width: 36, height: 36)
+                .background(Color.bgElevated)
+                .clipShape(Circle())
+                .overlay(Circle().stroke(Color.bdBorder, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .sheet(isPresented: $showingPeople) {
+            PeopleSheet().environment(lang)
         }
     }
 }
