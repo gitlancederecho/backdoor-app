@@ -43,9 +43,6 @@ struct HoursAdminView: View {
                     Text(tr("hours_hint"))
                         .font(.caption2)
                         .foregroundColor(.gray)
-                    Text(tr("plus_one_hint"))
-                        .font(.caption2)
-                        .foregroundColor(.gray)
                     LazyVStack(spacing: 8) {
                         ForEach(venue.schedule) { day in
                             dayRow(day)

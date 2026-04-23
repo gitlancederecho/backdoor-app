@@ -206,7 +206,6 @@ private let enStrings: [String: String] = [
     "timezone_hint": "The venue's local time zone. Used for every business-day calculation.",
     "search_timezone": "Search timezones",
     "operating_hours": "Operating hours",
-    "plus_one_hint": "“+1” means the close time is on the next calendar day (e.g. 17:00 – 00:00 +1 is a shift that opens at 5 pm and closes at midnight).",
 
     // Audit trail / history
     "history": "History",
@@ -368,7 +367,6 @@ private let jaStrings: [String: String] = [
     "timezone_hint": "会場のローカルタイムゾーン。すべての営業日計算に使用されます。",
     "search_timezone": "タイムゾーンを検索",
     "operating_hours": "営業時間",
-    "plus_one_hint": "「+1」は閉店時刻が翌日であることを意味します（例：17:00 – 00:00 +1 は17時開店・翌日0時閉店）。",
 
     // Audit trail / history
     "history": "履歴",
