@@ -48,6 +48,7 @@ struct TasksAdminView: View {
     @State private var selectedIds: Set<UUID> = []
     @State private var showBulkDeleteConfirm = false
     @State private var showingMoveTarget = false
+    @State private var showingDeleted = false
 
     /// Filtered Unfiled templates (`folder_id IS NULL`). The root view's
     /// filter bar applies to this section only; folder rows are not
@@ -165,6 +166,10 @@ struct TasksAdminView: View {
             FolderEditorSheet(folder: nil, adminVM: adminVM)
                 .environment(lang)
         }
+        .sheet(isPresented: $showingDeleted) {
+            DeletedTasksSheet(adminVM: adminVM)
+                .environment(lang)
+        }
         .sheet(isPresented: $showingMoveTarget) {
             MoveToFolderPicker(
                 currentFolderId: nil,  // root = Unfiled scope
@@ -238,6 +243,7 @@ struct TasksAdminView: View {
                         TaskTemplateRow(
                             task: task,
                             categories: adminVM.categories,
+                            allStaff: adminVM.allStaff,
                             isEditing: editMode.isEditing,
                             onEdit: { editingTask = task },
                             onDelete: { handleDelete(task) }
@@ -445,6 +451,18 @@ struct TasksAdminView: View {
                 assigneeMenu
                 Spacer()
                 if adminVM.isLoading { ProgressView().scaleEffect(0.75) }
+                Menu {
+                    Button {
+                        showingDeleted = true
+                    } label: {
+                        Label(tr("show_deleted"), systemImage: "trash.slash")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.gray)
+                        .padding(.horizontal, 4)
+                }
                 Button(editMode.isEditing ? tr("done") : tr("edit")) {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         if editMode.isEditing {
@@ -560,6 +578,7 @@ struct TasksAdminView: View {
 struct TaskTemplateRow: View {
     let task: TaskTemplate
     let categories: [Category]
+    var allStaff: [Staff] = []
     let isEditing: Bool
     let onEdit: () -> Void
     let onDelete: () -> Void
@@ -586,6 +605,25 @@ struct TaskTemplateRow: View {
         }
     }
 
+    /// "by Alice · 3 weeks ago" — shown as a muted footer on the row.
+    /// Returns nil when neither createdBy nor createdAt resolve to
+    /// something useful (shouldn't happen for real data, but tests
+    /// and edge cases can hit it).
+    private var createdMeta: String? {
+        let who = task.createdBy.flatMap { id in
+            allStaff.first(where: { $0.id == id })?.name
+        }
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .short
+        let when = f.localizedString(for: task.createdAt, relativeTo: Date())
+        switch (who, when.isEmpty) {
+        case (let w?, false): return "\(tr("by_prefix")) \(w) · \(when)"
+        case (nil,    false): return when
+        case (let w?, true):  return "\(tr("by_prefix")) \(w)"
+        default:              return nil
+        }
+    }
+
     var body: some View {
         let _ = lang.current
         HStack(alignment: .top, spacing: 12) {
@@ -605,6 +643,11 @@ struct TaskTemplateRow: View {
                 }
                 .font(.caption)
                 .foregroundColor(.gray)
+                if let meta = createdMeta {
+                    Text(meta)
+                        .font(.caption2)
+                        .foregroundColor(.gray.opacity(0.7))
+                }
             }
             Spacer()
             if !isEditing {

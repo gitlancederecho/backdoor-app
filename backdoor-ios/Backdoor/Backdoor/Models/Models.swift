@@ -152,6 +152,10 @@ struct TaskTemplate: Codable, Identifiable {
     /// nil = "Unfiled" — shown outside any folder at the top of the
     /// Admin → Tasks list.
     var folderId: UUID?
+    /// Optional end-of-life date for recurring templates. When set,
+    /// `generate_daily_tasks` stops materializing rows for dates
+    /// after the cutoff. nil = runs indefinitely.
+    var recurrenceEndsOn: String?
     let createdAt: Date
 }
 
@@ -335,6 +339,8 @@ struct NewTask: Encodable {
     var endTime: String?
     /// Admin organizational bucket (nil = Unfiled).
     var folderId: UUID?
+    /// "yyyy-MM-dd" or nil for "runs forever."
+    var recurrenceEndsOn: String?
 }
 
 /// Row-level insert for daily_tasks. Used when we need to materialize a

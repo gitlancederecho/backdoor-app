@@ -45,6 +45,10 @@ alter table tasks add column if not exists start_time time;
 alter table tasks add column if not exists end_time time;
 -- `tasks.folder_id` (references task_folders.id) is added after the
 -- task_folders table is created, further down in this file.
+-- Optional end date for recurring templates. Nullable = runs forever
+-- (legacy behavior). `generate_daily_tasks` skips the template once
+-- target_date is past this cutoff.
+alter table tasks add column if not exists recurrence_ends_on date;
 
 create table if not exists daily_tasks (
   id uuid primary key default gen_random_uuid(),
@@ -390,6 +394,10 @@ begin
     from tasks t
     where t.is_active = true
       and t.is_recurring = true
+      -- Respect optional recurrence end date: when set, stop
+      -- materializing after the cutoff. nil = runs indefinitely
+      -- (legacy behavior).
+      and (t.recurrence_ends_on is null or target_date <= t.recurrence_ends_on)
       and (
         t.recurrence_type = 'daily'
         or (t.recurrence_type = 'weekly' and dow = any(t.recurrence_days))

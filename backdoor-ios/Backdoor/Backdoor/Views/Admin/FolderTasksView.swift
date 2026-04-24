@@ -316,6 +316,7 @@ struct FolderTasksView: View {
                     TaskTemplateRow(
                         task: task,
                         categories: adminVM.categories,
+                        allStaff: adminVM.allStaff,
                         isEditing: editMode.isEditing,
                         onEdit: { editingTask = task },
                         onDelete: {

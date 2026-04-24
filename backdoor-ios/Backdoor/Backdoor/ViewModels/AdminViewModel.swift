@@ -145,6 +145,27 @@ final class AdminViewModel {
         await fetchFolders()
     }
 
+    /// Explicitly set (or clear) `recurrence_ends_on` on a single
+    /// template. Uses a custom-encoded patch so that nil flows as JSON
+    /// null — the default encoder would omit it and leave a stale
+    /// cutoff in place.
+    func setRecurrenceEnd(id: UUID, to iso: String?) async throws {
+        struct Patch: Encodable {
+            let recurrenceEndsOn: String?
+            enum CodingKeys: String, CodingKey { case recurrenceEndsOn = "recurrence_ends_on" }
+            func encode(to encoder: Encoder) throws {
+                var c = encoder.container(keyedBy: CodingKeys.self)
+                try c.encode(recurrenceEndsOn, forKey: .recurrenceEndsOn)
+            }
+        }
+        try await supabase
+            .from("tasks")
+            .update(Patch(recurrenceEndsOn: iso))
+            .eq("id", value: id)
+            .execute()
+        await fetchAll()
+    }
+
     /// Move a single task to a folder (or to Unfiled when `folderId` is nil).
     func moveTask(_ task: TaskTemplate, toFolder folderId: UUID?) async throws {
         struct Patch: Encodable {
@@ -248,6 +269,28 @@ final class AdminViewModel {
         for t in templates {
             try? await deleteTask(t)
         }
+    }
+
+    /// Restore multiple soft-deleted templates. Logs an `undone`
+    /// event per template (matches `undoDeleteTask`).
+    func restoreTaskTemplates(_ templates: [TaskTemplate]) async {
+        for t in templates {
+            try? await undoDeleteTask(t)
+        }
+    }
+
+    /// Fetch soft-deleted templates on demand (not cached on the VM
+    /// so the default list stays tight). The admin's "Show deleted"
+    /// toggle calls this and filters against the result.
+    func fetchDeletedTaskTemplates() async -> [TaskTemplate] {
+        let rows: [TaskTemplate] = (try? await supabase
+            .from("tasks")
+            .select()
+            .eq("is_active", value: false)
+            .order("created_at", ascending: false)
+            .execute()
+            .value) ?? []
+        return rows
     }
 
     /// Delete multiple categories (non-builtin only — the caller is

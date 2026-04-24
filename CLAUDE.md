@@ -87,6 +87,8 @@ management PAT (SQL-level).
 - `venue_settings` / `venue_schedule` + `updated_at` triggers + RLS + Realtime
 - `venue_schedule_override` (per-date exceptions: holidays, special hours) + `effective_venue_hours(date)` resolver that merges the override with the weekly default. `generate_daily_tasks` consults this instead of `venue_schedule` directly, so a date override flips task generation on/off for that specific date. `reason` is a free-form label for the admin UI + (future) venue status pill.
 - `categories` table (key pk, label_en, label_ja, sort_order, is_builtin) + RLS + Realtime — admin-editable via Admin → Categories.
+- `task_folders` table + `tasks.folder_id` FK — admin organizational bucket (separate from `category`). Soft-delete a folder → cascade nulls `folder_id` on member tasks so they fall back to Unfiled. RLS/Realtime same shape as categories.
+- `tasks.recurrence_ends_on` (nullable DATE). `generate_daily_tasks` skips a template once `target_date > recurrence_ends_on`. nil = runs forever (legacy behavior).
 - `task_comments` table (daily_task_id, author_id, body, created_at, edited_at) + RLS + Realtime + body-diff edited_at trigger.
 - `profile_stats(target uuid default null)` RPC returning jsonb — powers Profile + peer StaffProfileView.
 - `generate_daily_tasks` skips closed days and copies `start_time`/`end_time` from the template (verified behaviorally).
@@ -142,7 +144,7 @@ gone.
 
 Bottom tabs (varies by role):
 - **Today** — task board for a business day. Rich header: prev/next date chevrons, tappable date → graphical DatePicker, venue status pill (Open / Prep / Closed / Between shifts), Everyone/Mine pills, "Today" shortcut when off-day. Swipe left/right shifts the date. People-search magnifying glass at top-right opens `PeopleSheet`.
-- **Admin** (admin only) — three non-scrolling sub-tabs: Overview · Tasks · Categories. Three icon buttons at the top-right of the header open **Staff** (`person.2.fill`), **Hours** (`clock.fill`), and **History** (`clock.arrow.circlepath`) as sheets — each wrapped in a `NavigationStack` with a `Close` toolbar button (cancellationAction).
+- **Admin** (admin only) — three non-scrolling sub-tabs: Overview · Tasks · Categories. Three icon buttons at the top-right of the header open **Staff** (`person.2.fill`), **Hours** (`clock.fill`), and **History** (`clock.arrow.circlepath`) as sheets — each wrapped in a `NavigationStack` with a `Close` toolbar button (cancellationAction). Admin → Tasks is hierarchical: Unfiled tasks at the top of the root list, Folders section below; tapping a folder slides in `FolderTasksView`. Floating `+` is a menu with "New task" / "New folder". Bulk edit everywhere in Admin has **Select All** and, for Tasks, **Move to folder**. A `⋯` menu on the Tasks filter bar opens **Deleted tasks** (soft-deleted templates, single- or bulk-restore). Task editor shows **Created by [name] · [time]** footer for existing rows, and a **recurrence end date** toggle for seasonal recurring tasks.
 - **Profile** — identity card, role-specific insight (admin: active staff count / templates created / reassignments; staff: next pending task today), 2×2 stats grid, recent activity, language picker, sign out.
 
 Key reusables in `backdoor-ios/Backdoor/Backdoor/Views/Components/`:

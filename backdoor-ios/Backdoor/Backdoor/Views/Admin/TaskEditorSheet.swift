@@ -28,6 +28,8 @@ struct TaskEditorSheet: View {
     @State private var endTime: Date = defaultTime(hour: 18)
     @State private var folderId: UUID? = nil
     @State private var showingFolderPicker = false
+    @State private var hasRecurrenceEnd = false
+    @State private var recurrenceEndsOn: Date = Date().addingTimeInterval(60*60*24*30) // +30 days
     @State private var isSaving = false
     @State private var error: String?
 
@@ -79,6 +81,24 @@ struct TaskEditorSheet: View {
         case .daily: return tr("repeat_daily")
         case .weekly: return tr("repeat_weekly")
         case .monthly: return tr("repeat_monthly")
+        }
+    }
+
+    /// "Created by Alice · 3 weeks ago" — shown at the bottom of the
+    /// editor for existing tasks. nil when neither piece of info
+    /// resolves.
+    private func creatorFooter(for t: TaskTemplate) -> String? {
+        let who = t.createdBy.flatMap { id in
+            adminVM.allStaff.first(where: { $0.id == id })?.name
+        }
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .full
+        let when = f.localizedString(for: t.createdAt, relativeTo: Date())
+        switch who {
+        case .some(let name):
+            return String(format: tr("created_by_meta"), name, when)
+        case .none:
+            return String(format: tr("created_meta"), when)
         }
     }
 
@@ -261,10 +281,43 @@ struct TaskEditorSheet: View {
                                     }
                                 }
                             }
+
+                            // Optional recurrence cutoff — handy for
+                            // seasonal tasks ("every Fri through
+                            // Golden Week"). When off, nil goes to
+                            // the DB and generate_daily_tasks keeps
+                            // materializing forever.
+                            Toggle(tr("recurrence_ends"), isOn: $hasRecurrenceEnd)
+                                .tint(.bdAccent)
+                                .padding(.horizontal, 4)
+                            if hasRecurrenceEnd {
+                                field(tr("recurrence_end_date")) {
+                                    DatePicker(
+                                        "",
+                                        selection: $recurrenceEndsOn,
+                                        displayedComponents: .date
+                                    )
+                                    .datePickerStyle(.compact)
+                                    .labelsHidden()
+                                    .colorScheme(.dark)
+                                }
+                            }
                         }
 
                         if let error {
                             Text(error).font(.caption).foregroundColor(.statusPending)
+                        }
+
+                        // Creator + created_at footer — only for
+                        // existing tasks (new ones haven't been
+                        // persisted yet, so there's nothing to show).
+                        if let t = task, let meta = creatorFooter(for: t) {
+                            Divider().background(Color.bdBorder)
+                            Text(meta)
+                                .font(.caption2)
+                                .foregroundColor(.gray.opacity(0.7))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.top, 4)
                         }
                     }
                     .padding(20)
@@ -353,6 +406,14 @@ struct TaskEditorSheet: View {
         priority = t.priority
         folderId = t.folderId
 
+        if let iso = t.recurrenceEndsOn,
+           let parsed = Self.parseDate(iso) {
+            hasRecurrenceEnd = true
+            recurrenceEndsOn = parsed
+        } else {
+            hasRecurrenceEnd = false
+        }
+
         if let s = t.startTime, let (h, m) = TimeOfDay.parse(s) {
             hasStartTime = true
             startTime = Self.makeDate(hour: h, minute: m)
@@ -374,9 +435,27 @@ struct TaskEditorSheet: View {
         return Calendar.current.date(from: comps) ?? Date()
     }
 
+    /// Parse "yyyy-MM-dd" in POSIX locale so the DB's stable
+    /// format always round-trips.
+    private static func parseDate(_ iso: String) -> Date? {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        return f.date(from: iso)
+    }
+
+    private static func formatDate(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        return f.string(from: date)
+    }
+
     private func save() async {
         isSaving = true
         error = nil
+        let endsOn: String? = (isRecurring && hasRecurrenceEnd)
+            ? Self.formatDate(recurrenceEndsOn) : nil
         let newTask = NewTask(
             title: title.trimmingCharacters(in: .whitespaces),
             titleJa: titleJa.trimmingCharacters(in: .whitespaces).isEmpty ? nil : titleJa,
@@ -389,7 +468,8 @@ struct TaskEditorSheet: View {
             createdBy: auth.staff?.id,
             startTime: hasStartTime ? TimeOfDay.dbString(from: startTime) : nil,
             endTime: hasEndTime ? TimeOfDay.dbString(from: endTime) : nil,
-            folderId: folderId
+            folderId: folderId,
+            recurrenceEndsOn: endsOn
         )
         let bd = BusinessDay.currentBusinessDayISO(
             schedule: venue.schedule,
@@ -401,11 +481,14 @@ struct TaskEditorSheet: View {
                 try await adminVM.updateTask(id: t.id, newTask, businessDay: bd)
                 // `updateTask` uses the default Encodable path, which
                 // omits nil Optionals — so if the admin just switched
-                // the folder to Unfiled, the DB would keep the old
-                // folder_id. Force the explicit null via `moveTask`,
-                // which uses a custom encoder.
+                // the folder to Unfiled, or cleared the recurrence
+                // end date, the DB would keep the old value. Force
+                // the explicit nulls when those fields changed.
                 if t.folderId != folderId {
                     try await adminVM.moveTask(t, toFolder: folderId)
+                }
+                if t.recurrenceEndsOn != endsOn {
+                    try await adminVM.setRecurrenceEnd(id: t.id, to: endsOn)
                 }
             } else {
                 try await adminVM.createTask(newTask, businessDay: bd)
