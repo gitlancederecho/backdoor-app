@@ -206,7 +206,30 @@ struct FolderTasksView: View {
             tr("delete_folder_confirm"),
             isPresented: $showingDeleteConfirm
         ) {
-            Button(tr("delete"), role: .destructive) {
+            let count = adminVM.taskCount(inFolder: folder.id)
+            // Option 1: nuke folder + every task inside. Shown first
+            // because it's the more destructive choice — iOS alerts
+            // render destructive actions at the top by role. Only
+            // offered when the folder actually has tasks; otherwise
+            // it's identical to option 2.
+            if count > 0 {
+                Button(
+                    String(format: tr("delete_folder_and_n_tasks"), count),
+                    role: .destructive
+                ) {
+                    Task {
+                        try? await adminVM.deleteFolderAndTasks(folder)
+                        onBack()
+                    }
+                }
+            }
+            // Option 2: delete folder only; tasks slide back to
+            // Unfiled. Destructive role because the folder itself
+            // is still gone, just the tasks survive.
+            Button(
+                count > 0 ? tr("delete_folder_keep_tasks") : tr("delete_folder"),
+                role: .destructive
+            ) {
                 Task {
                     try? await adminVM.deleteFolder(folder)
                     onBack()
@@ -214,7 +237,12 @@ struct FolderTasksView: View {
             }
             Button(tr("cancel"), role: .cancel) {}
         } message: {
-            Text(tr("delete_folder_message"))
+            let count = adminVM.taskCount(inFolder: folder.id)
+            if count > 0 {
+                Text(String(format: tr("delete_folder_choice_message"), count))
+            } else {
+                Text(tr("delete_folder_empty_message"))
+            }
         }
     }
 

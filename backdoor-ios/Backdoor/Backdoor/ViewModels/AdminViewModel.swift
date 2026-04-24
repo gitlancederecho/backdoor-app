@@ -130,6 +130,26 @@ final class AdminViewModel {
         await fetchAll()  // tasks' folder_id changed, reload
     }
 
+    /// Soft-delete a folder *and* every template inside it. Preferred
+    /// when an admin clears out an entire category of work. Each
+    /// member template goes through `deleteTask` so `task_events`
+    /// gets the usual `deleted` row per template (matches individual
+    /// deletes — admins can still find + restore a specific one via
+    /// the Deleted tasks sheet).
+    func deleteFolderAndTasks(_ folder: TaskFolder) async throws {
+        let members = taskTemplates.filter { $0.folderId == folder.id }
+        for t in members {
+            try? await deleteTask(t)
+        }
+        try await supabase
+            .from("task_folders")
+            .update(TaskFolderPatch(isActive: false))
+            .eq("id", value: folder.id)
+            .execute()
+        await fetchFolders()
+        await fetchAll()
+    }
+
     /// Persist the current `folders` order.
     func persistFolderOrder() async {
         for (index, f) in folders.enumerated() {
