@@ -12,6 +12,12 @@ struct ProfileEditSheet: View {
     @State private var uploadedPhotoData: Data?
     @State private var isSaving = false
     @State private var error: String?
+    /// Drives `.photosPicker(isPresented:)` — using the modifier form
+    /// instead of the inline `PhotosPicker` view avoids the
+    /// "_UIReparentingView as subview of UIHostingController.view"
+    /// runtime warning that fires when the picker lives inside a
+    /// SwiftUI sheet.
+    @State private var showingPhotoPicker = false
 
     var body: some View {
         let _ = lang.current
@@ -38,12 +44,16 @@ struct ProfileEditSheet: View {
                         }
                         .overlay(Circle().stroke(Color.bdBorder, lineWidth: 1))
 
-                        let changePhotoLabel = tr("change_photo")
-                        PhotosPicker(selection: $pickedPhoto, matching: .images) {
-                            Text(changePhotoLabel)
+                        Button { showingPhotoPicker = true } label: {
+                            Text(tr("change_photo"))
                                 .font(.subheadline.weight(.medium))
                                 .foregroundColor(.bdAccent)
                         }
+                        .photosPicker(
+                            isPresented: $showingPhotoPicker,
+                            selection: $pickedPhoto,
+                            matching: .images
+                        )
                     }
                     .padding(.top, 20)
 

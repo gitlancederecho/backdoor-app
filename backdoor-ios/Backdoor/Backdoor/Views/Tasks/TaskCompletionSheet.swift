@@ -13,6 +13,12 @@ struct TaskCompletionSheet: View {
     @State private var selectedPhoto: PhotosPickerItem?
     @State private var photoData: Data?
     @State private var photoPreview: Image?
+    /// Drives the `.photosPicker(isPresented:)` modifier. Using the
+    /// modifier form instead of the inline `PhotosPicker` view
+    /// silences the "_UIReparentingView as subview of
+    /// UIHostingController.view" warning that fires when the picker
+    /// is embedded inside a SwiftUI sheet.
+    @State private var showingPhotoPicker = false
     @State private var isSaving = false
     @State private var errorMessage: String?
     @State private var showHistory = false
@@ -186,9 +192,8 @@ struct TaskCompletionSheet: View {
                                 } placeholder: { Color.bgElevated }
                                     .frame(maxWidth: .infinity).frame(height: 200)
                                     .clipShape(RoundedRectangle(cornerRadius: 12))
-                                let replaceLabel = tr("replace_photo")
-                                PhotosPicker(selection: $selectedPhoto, matching: .images) {
-                                    Label(replaceLabel, systemImage: "arrow.triangle.2.circlepath")
+                                Button { showingPhotoPicker = true } label: {
+                                    Label(tr("replace_photo"), systemImage: "arrow.triangle.2.circlepath")
                                         .font(.caption.bold())
                                         .foregroundColor(.white)
                                         .padding(.horizontal, 10).padding(.vertical, 5)
@@ -198,9 +203,8 @@ struct TaskCompletionSheet: View {
                                 .padding(8)
                             }
                         } else {
-                            let chooseLabel = tr("choose_photo")
-                            PhotosPicker(selection: $selectedPhoto, matching: .images) {
-                                Label(chooseLabel, systemImage: "camera")
+                            Button { showingPhotoPicker = true } label: {
+                                Label(tr("choose_photo"), systemImage: "camera")
                                     .font(.subheadline)
                                     .foregroundColor(.white)
                                     .frame(maxWidth: .infinity)
@@ -312,6 +316,11 @@ struct TaskCompletionSheet: View {
             }
             Button(tr("cancel"), role: .cancel) {}
         }
+        .photosPicker(
+            isPresented: $showingPhotoPicker,
+            selection: $selectedPhoto,
+            matching: .images
+        )
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         .preferredColorScheme(.dark)
