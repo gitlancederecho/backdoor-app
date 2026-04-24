@@ -13,6 +13,7 @@ struct TaskEditorSheet: View {
     @State private var category: String = "opening"
     @State private var showingAddCategory = false
     @State private var assignedTo: UUID? = nil
+    @State private var showingAssigneePicker = false
     @State private var isRecurring = true
     @State private var recurrenceType: RecurrenceType = .daily
     @State private var days: Set<Int> = []
@@ -40,6 +41,23 @@ struct TaskEditorSheet: View {
     /// via `includingPending` so the selected chip still renders.
     private var availableCategories: [String] {
         CategoryDisplay.available(in: adminVM.categories, includingPending: category)
+    }
+
+    /// Rows for the assign-to picker: "Anyone" pseudo-row + one row
+    /// per active staff member.
+    private var assigneePickerRows: [PickerRow<String>] {
+        var rows: [PickerRow<String>] = [
+            PickerRow<String>(id: "__none__", label: tr("assign_anyone"), isSpecial: true)
+        ]
+        rows.append(contentsOf: adminVM.allStaff.filter(\.isActive).map { s in
+            PickerRow<String>(
+                id: s.id.uuidString,
+                label: s.name,
+                sublabel: s.email,
+                avatar: (s.initials, s.avatarUrl)
+            )
+        })
+        return rows
     }
 
     private func priorityLabel(_ p: Priority) -> String {
@@ -114,14 +132,30 @@ struct TaskEditorSheet: View {
                         }
 
                         field(tr("assign_to")) {
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(spacing: 8) {
-                                    chipButton(tr("assign_anyone"), selected: assignedTo == nil) { assignedTo = nil }
-                                    ForEach(adminVM.allStaff.filter(\.isActive)) { s in
-                                        chipButton(s.name, selected: assignedTo == s.id) { assignedTo = s.id }
+                            // Tappable row opens a searchable picker —
+                            // scales better than a chip row as the team
+                            // grows past a handful of people.
+                            Button {
+                                showingAssigneePicker = true
+                            } label: {
+                                HStack(spacing: 10) {
+                                    if let id = assignedTo,
+                                       let s = adminVM.allStaff.first(where: { $0.id == id }) {
+                                        AvatarView(initials: s.initials, url: s.avatarUrl, size: 24)
+                                        Text(s.name).foregroundColor(.white)
+                                    } else {
+                                        Image(systemName: "person.crop.circle").foregroundColor(.gray)
+                                        Text(tr("assign_anyone")).foregroundColor(.gray)
                                     }
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption).foregroundColor(.gray)
                                 }
+                                .padding(12)
+                                .background(Color.bgElevated)
+                                .clipShape(RoundedRectangle(cornerRadius: 10))
                             }
+                            .buttonStyle(.plain)
                         }
 
                         // Time window (optional)
@@ -231,6 +265,21 @@ struct TaskEditorSheet: View {
             AddCategorySheet(adminVM: adminVM) { newKey in
                 category = newKey
             }
+            .environment(lang)
+        }
+        .sheet(isPresented: $showingAssigneePicker) {
+            SearchablePickerSheet<String>(
+                title: tr("assign_to"),
+                rows: assigneePickerRows,
+                selectedID: assignedTo?.uuidString ?? "__none__",
+                onPick: { id in
+                    if id == "__none__" {
+                        assignedTo = nil
+                    } else if let uuid = UUID(uuidString: id) {
+                        assignedTo = uuid
+                    }
+                }
+            )
             .environment(lang)
         }
     }

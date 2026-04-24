@@ -23,6 +23,8 @@ struct TasksAdminView: View {
     @State private var recurrenceFilter: TasksRecurrenceFilter = .all
     @State private var categoryFilter: String? = nil       // nil = all; otherwise a category key
     @State private var assigneeFilter: TasksAssigneeFilter = .all
+    @State private var showingCategoryPicker = false
+    @State private var showingAssigneePicker = false
 
     /// Undo state. When a delete lands, we stash the template + a
     /// short dismiss timer; tapping Undo within the window fires the
@@ -111,6 +113,35 @@ struct TasksAdminView: View {
                 .environment(auth)
                 .environment(lang)
                 .environment(venue)
+        }
+        .sheet(isPresented: $showingCategoryPicker) {
+            SearchablePickerSheet<String>(
+                title: tr("tasks_filter_category"),
+                rows: categoryPickerRows,
+                selectedID: selectedCategoryId,
+                onPick: { id in
+                    categoryFilter = (id == "__all__") ? nil : id
+                }
+            )
+            .environment(lang)
+        }
+        .sheet(isPresented: $showingAssigneePicker) {
+            SearchablePickerSheet<String>(
+                title: tr("tasks_filter_assignee"),
+                rows: assigneePickerRows,
+                selectedID: selectedAssigneeId,
+                onPick: { id in
+                    switch id {
+                    case "__all__":    assigneeFilter = .all
+                    case "__anyone__": assigneeFilter = .anyone
+                    default:
+                        if let uuid = UUID(uuidString: id) {
+                            assigneeFilter = .staff(uuid)
+                        }
+                    }
+                }
+            )
+            .environment(lang)
         }
         .alert(
             tr("delete_n_tasks_confirm"),
@@ -276,45 +307,62 @@ struct TasksAdminView: View {
     }
 
     private var categoryMenu: some View {
-        Menu {
-            Button(tr("history_range_all")) { categoryFilter = nil }
-            Divider()
-            ForEach(CategoryDisplay.available(in: adminVM.categories), id: \.self) { cat in
-                Button {
-                    categoryFilter = cat
-                } label: {
-                    HStack {
-                        Text(CategoryDisplay.localized(cat, in: adminVM.categories))
-                        if categoryFilter == cat { Image(systemName: "checkmark") }
-                    }
-                }
-            }
+        Button {
+            showingCategoryPicker = true
         } label: {
             filterPill(label: tr("tasks_filter_category"),
                        value: categoryFilter.map { CategoryDisplay.localized($0, in: adminVM.categories) } ?? tr("history_range_all"))
         }
+        .buttonStyle(.plain)
     }
 
     private var assigneeMenu: some View {
-        Menu {
-            Button(tr("history_range_all"))  { assigneeFilter = .all }
-            Button(tr("assign_anyone"))      { assigneeFilter = .anyone }
-            Divider()
-            ForEach(adminVM.allStaff) { s in
-                Button {
-                    assigneeFilter = .staff(s.id)
-                } label: {
-                    HStack {
-                        Text(s.name)
-                        if case .staff(let id) = assigneeFilter, id == s.id {
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                }
-            }
+        Button {
+            showingAssigneePicker = true
         } label: {
             filterPill(label: tr("tasks_filter_assignee"),
                        value: assigneeSummary)
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Picker rows
+
+    private var categoryPickerRows: [PickerRow<String>] {
+        var rows: [PickerRow<String>] = [
+            PickerRow<String>(id: "__all__", label: tr("history_range_all"), isSpecial: true)
+        ]
+        rows.append(contentsOf: CategoryDisplay.available(in: adminVM.categories).map {
+            PickerRow<String>(id: $0, label: CategoryDisplay.localized($0, in: adminVM.categories))
+        })
+        return rows
+    }
+
+    private var assigneePickerRows: [PickerRow<String>] {
+        var rows: [PickerRow<String>] = [
+            PickerRow<String>(id: "__all__",   label: tr("history_range_all"), isSpecial: true),
+            PickerRow<String>(id: "__anyone__", label: tr("assign_anyone"),     isSpecial: true)
+        ]
+        rows.append(contentsOf: adminVM.allStaff.map { s in
+            PickerRow<String>(
+                id: s.id.uuidString,
+                label: s.name,
+                sublabel: s.email,
+                avatar: (s.initials, s.avatarUrl)
+            )
+        })
+        return rows
+    }
+
+    private var selectedCategoryId: String {
+        categoryFilter ?? "__all__"
+    }
+
+    private var selectedAssigneeId: String {
+        switch assigneeFilter {
+        case .all:           return "__all__"
+        case .anyone:        return "__anyone__"
+        case .staff(let id): return id.uuidString
         }
     }
 

@@ -7,6 +7,7 @@ struct HistoryAdminView: View {
     @Environment(LanguageManager.self) private var lang
     @State private var vm = HistoryViewModel()
     @State private var selectedTask: DailyTask?
+    @State private var showingActorPicker = false
 
     var body: some View {
         let _ = lang.current
@@ -43,6 +44,36 @@ struct HistoryAdminView: View {
                 set: { if !$0 { selectedTask = nil } }
             ))
         }
+        .sheet(isPresented: $showingActorPicker) {
+            SearchablePickerSheet<String>(
+                title: tr("history_filter_actor"),
+                rows: actorPickerRows,
+                selectedID: vm.selectedActorId?.uuidString ?? "__all__",
+                onPick: { id in
+                    if id == "__all__" {
+                        vm.selectedActorId = nil
+                    } else if let uuid = UUID(uuidString: id) {
+                        vm.selectedActorId = uuid
+                    }
+                }
+            )
+            .environment(lang)
+        }
+    }
+
+    private var actorPickerRows: [PickerRow<String>] {
+        var rows: [PickerRow<String>] = [
+            PickerRow<String>(id: "__all__", label: tr("history_actor_all"), isSpecial: true)
+        ]
+        rows.append(contentsOf: adminVM.allStaff.map { s in
+            PickerRow<String>(
+                id: s.id.uuidString,
+                label: s.name,
+                sublabel: s.email,
+                avatar: (s.initials, s.avatarUrl)
+            )
+        })
+        return rows
     }
 
     // MARK: - Filter bar
@@ -110,27 +141,15 @@ struct HistoryAdminView: View {
     }
 
     private var actorMenu: some View {
-        Menu {
-            Button(tr("history_actor_all")) { vm.selectedActorId = nil }
-            Divider()
-            ForEach(adminVM.allStaff) { s in
-                Button {
-                    vm.selectedActorId = s.id
-                } label: {
-                    HStack {
-                        Text(s.name)
-                        if vm.selectedActorId == s.id {
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                }
-            }
+        Button {
+            showingActorPicker = true
         } label: {
             filterPill(
                 label: tr("history_filter_actor"),
                 value: actorSummary
             )
         }
+        .buttonStyle(.plain)
     }
 
     private func filterPill(label: String, value: String) -> some View {
