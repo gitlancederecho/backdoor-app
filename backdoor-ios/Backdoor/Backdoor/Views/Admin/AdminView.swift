@@ -68,17 +68,26 @@ struct AdminView: View {
                         .accessibilityLabel(tr("admin_open_history"))
                     }
 
-                    // Segment tabs — four entries, no scroll needed.
-                    HStack(spacing: 8) {
+                    // Segmented pills — only the selected pill carries
+                    // a background so the "you are here" signal isn't
+                    // diluted by low-contrast neighbors.
+                    HStack(spacing: 4) {
                         ForEach(AdminTab.allCases, id: \.self) { t in
-                            Button(t.localized) { tab = t }
-                                .font(.subheadline.weight(tab == t ? .semibold : .regular))
-                                .foregroundColor(tab == t ? .black : .gray)
-                                .padding(.horizontal, 16).padding(.vertical, 8)
-                                .background(tab == t ? Color.bdAccent : Color.bgElevated)
-                                .clipShape(Capsule())
-                                .frame(maxWidth: .infinity)
+                            Button {
+                                tab = t
+                            } label: {
+                                Text(t.localized)
+                                    .font(.subheadline.weight(tab == t ? .semibold : .regular))
+                                    .foregroundColor(tab == t ? .black : .gray)
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 7)
+                                    .background(tab == t ? Color.bdAccent : Color.clear)
+                                    .clipShape(Capsule())
+                                    .contentShape(Capsule())
+                            }
+                            .buttonStyle(.plain)
                         }
+                        Spacer(minLength: 0)
                     }
                 }
                 .padding(.horizontal, 16)
