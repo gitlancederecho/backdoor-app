@@ -36,6 +36,13 @@ let supabase = SupabaseClient(
                 }
                 return d
             }()
+        ),
+        // v3 behavior opt-in (supabase-swift PR #822). Safe here:
+        // `AuthViewModel` ignores `.initialSession` events, so the
+        // possibly-expired stored session never flows into `session`
+        // — we rely on `supabase.auth.session` + `.tokenRefreshed`.
+        auth: SupabaseClientOptions.AuthOptions(
+            emitLocalSessionAsInitialSession: true
         )
     )
 )
