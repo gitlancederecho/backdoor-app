@@ -8,6 +8,8 @@ struct HoursAdminView: View {
 
     @State private var editingDay: VenueDay?
     @State private var editingTimezone = false
+    @State private var editingOverride: OverrideSheetInput?
+    @State private var overrideToDelete: VenueScheduleOverride?
     @State private var prepBufferMinutes: Int = 240
     @State private var graceMinutes: Int = 120
     @State private var isSaving = false
@@ -44,6 +46,26 @@ struct HoursAdminView: View {
             TimezonePickerSheet(current: venue.settings.timezone)
                 .environment(venue)
                 .environment(lang)
+        }
+        .sheet(item: $editingOverride) { input in
+            OverrideEditorSheet(input: input)
+                .environment(venue)
+                .environment(lang)
+        }
+        .alert(
+            tr("delete_exception_confirm"),
+            isPresented: Binding(
+                get: { overrideToDelete != nil },
+                set: { if !$0 { overrideToDelete = nil } }
+            ),
+            presenting: overrideToDelete
+        ) { ov in
+            Button(tr("delete"), role: .destructive) {
+                Task { try? await venue.deleteOverride(date: ov.date) }
+            }
+            Button(tr("cancel"), role: .cancel) {}
+        } message: { ov in
+            Text(OverrideDisplay.dateLabel(ov.date))
         }
         .onAppear {
             prepBufferMinutes = Int(venue.settings.prepBufferMinutes)
@@ -86,6 +108,43 @@ struct HoursAdminView: View {
                     LazyVStack(spacing: 8) {
                         ForEach(venue.schedule) { day in
                             dayRow(day)
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+
+                // Schedule exceptions
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Text(tr("schedule_exceptions"))
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(.gray)
+                            .tracking(1.2)
+                        Spacer()
+                        Button {
+                            editingOverride = .new
+                        } label: {
+                            Label(tr("add_exception"), systemImage: "plus")
+                                .font(.caption.weight(.semibold))
+                                .foregroundColor(.bdAccent)
+                        }
+                    }
+                    Text(tr("schedule_exceptions_hint"))
+                        .font(.caption2)
+                        .foregroundColor(.gray)
+
+                    if venue.upcomingOverrides.isEmpty {
+                        Text(tr("no_exceptions"))
+                            .font(.subheadline)
+                            .foregroundColor(.gray)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(14)
+                            .cardStyle()
+                    } else {
+                        LazyVStack(spacing: 8) {
+                            ForEach(venue.upcomingOverrides) { ov in
+                                overrideRow(ov)
+                            }
                         }
                     }
                 }
@@ -234,6 +293,298 @@ struct HoursAdminView: View {
         }
         .padding(14)
         .cardStyle()
+    }
+
+    // MARK: - Override row
+
+    @ViewBuilder
+    private func overrideRow(_ ov: VenueScheduleOverride) -> some View {
+        Button {
+            editingOverride = .existing(ov)
+        } label: {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(OverrideDisplay.dateLabel(ov.date))
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(.white)
+                    Text(OverrideDisplay.statusLine(ov))
+                        .font(.caption)
+                        .foregroundColor(ov.isClosed == true ? .statusPending : .gray)
+                    if let reason = ov.reason, !reason.isEmpty {
+                        Text(reason)
+                            .font(.caption2)
+                            .foregroundColor(.gray)
+                            .lineLimit(2)
+                    }
+                }
+                Spacer()
+                Button {
+                    overrideToDelete = ov
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 14))
+                        .foregroundColor(.statusPending)
+                        .padding(6)
+                }
+                .buttonStyle(.borderless)
+            }
+            .padding(14)
+            .cardStyle()
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Override sheet input
+
+/// Drives `.sheet(item:)` for both "add new override" and "edit existing
+/// override" cases. Separate identity per case so SwiftUI re-presents the
+/// sheet cleanly on add → edit transitions.
+enum OverrideSheetInput: Identifiable {
+    case new
+    case existing(VenueScheduleOverride)
+
+    var id: String {
+        switch self {
+        case .new: return "__new__"
+        case .existing(let ov): return "existing:\(ov.date)"
+        }
+    }
+}
+
+// MARK: - Display helpers
+
+enum OverrideDisplay {
+    /// "Sat · Apr 25" (locale-respecting date from yyyy-MM-dd).
+    static func dateLabel(_ iso: String) -> String {
+        let inFmt = DateFormatter()
+        inFmt.dateFormat = "yyyy-MM-dd"
+        inFmt.locale = Locale(identifier: "en_US_POSIX")
+        guard let date = inFmt.date(from: iso) else { return iso }
+        let out = DateFormatter()
+        out.locale = Locale.current
+        out.setLocalizedDateFormatFromTemplate("EEE MMMd")
+        return out.string(from: date)
+    }
+
+    /// "Closed" or "Open 17:00 – 23:00" — single line for the list row.
+    static func statusLine(_ ov: VenueScheduleOverride) -> String {
+        if ov.isClosed == true { return tr("closed") }
+        if let o = ov.openTime, let c = ov.closeTime {
+            return "\(TimeOfDay.displayString(from: o)) – \(TimeOfDay.displayString(from: c))"
+        }
+        return tr("hours_default")
+    }
+}
+
+// MARK: - Override editor sheet
+
+struct OverrideEditorSheet: View {
+    let input: OverrideSheetInput
+    @Environment(VenueViewModel.self) private var venue
+    @Environment(LanguageManager.self) private var lang
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var date: Date = Date()
+    @State private var isClosed: Bool = false
+    @State private var overrideHours: Bool = false
+    @State private var openTime: Date = Self.makeDate(h: 17, m: 0)
+    @State private var closeTime: Date = Self.makeDate(h: 0, m: 0)
+    @State private var reason: String = ""
+    @State private var isSaving = false
+    @State private var error: String?
+
+    /// `true` for "Edit existing" (locks the date + shows delete). The
+    /// date primary key makes editing-the-date-of-an-existing-override
+    /// messy (delete + insert), so we just disallow.
+    private var isExisting: Bool {
+        if case .existing = input { return true }
+        return false
+    }
+
+    var body: some View {
+        let _ = lang.current
+        NavigationStack {
+            ZStack {
+                Color.bgPrimary.ignoresSafeArea()
+                ScrollView {
+                    VStack(spacing: 16) {
+                        // Date
+                        field(tr("date")) {
+                            DatePicker("", selection: $date, displayedComponents: .date)
+                                .datePickerStyle(.graphical)
+                                .labelsHidden()
+                                .colorScheme(.dark)
+                                .disabled(isExisting)
+                                .opacity(isExisting ? 0.7 : 1)
+                        }
+
+                        // Closed toggle
+                        Toggle(tr("closed_day"), isOn: $isClosed)
+                            .tint(.bdAccent)
+                            .padding(.horizontal, 4)
+
+                        // Override-hours toggle + pickers (only shown
+                        // when the day isn't flagged closed).
+                        if !isClosed {
+                            Toggle(tr("override_hours"), isOn: $overrideHours)
+                                .tint(.bdAccent)
+                                .padding(.horizontal, 4)
+
+                            if overrideHours {
+                                field(tr("open_time")) {
+                                    DatePicker("", selection: $openTime, displayedComponents: .hourAndMinute)
+                                        .datePickerStyle(.wheel)
+                                        .labelsHidden()
+                                        .frame(maxHeight: 130)
+                                        .frame(maxWidth: .infinity)
+                                        .background(Color.bgElevated)
+                                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                                        .colorScheme(.dark)
+                                }
+                                field(tr("close_time")) {
+                                    DatePicker("", selection: $closeTime, displayedComponents: .hourAndMinute)
+                                        .datePickerStyle(.wheel)
+                                        .labelsHidden()
+                                        .frame(maxHeight: 130)
+                                        .frame(maxWidth: .infinity)
+                                        .background(Color.bgElevated)
+                                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                                        .colorScheme(.dark)
+                                }
+                                Text(tr("close_next_day_hint"))
+                                    .font(.caption2)
+                                    .foregroundColor(.gray)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.horizontal, 4)
+                            }
+                        }
+
+                        // Reason
+                        field(tr("exception_reason")) {
+                            TextField(tr("exception_reason_placeholder"), text: $reason)
+                                .inputStyle()
+                        }
+
+                        if let error {
+                            Text(error).font(.caption).foregroundColor(.statusPending)
+                        }
+                    }
+                    .padding(20)
+                }
+            }
+            .navigationTitle(isExisting ? tr("edit_exception") : tr("new_exception"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Color.bgCard, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(tr("cancel")) { dismiss() }.foregroundColor(.gray)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(tr("save")) { Task { await save() } }
+                        .foregroundColor(.bdAccent)
+                        .disabled(isSaving)
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+        .onAppear { populate() }
+    }
+
+    @ViewBuilder
+    private func field<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label).font(.caption).foregroundColor(.gray)
+            content()
+        }
+    }
+
+    private func populate() {
+        switch input {
+        case .new:
+            date = Date()
+            isClosed = false
+            overrideHours = false
+            openTime = Self.makeDate(h: 17, m: 0)
+            closeTime = Self.makeDate(h: 0, m: 0)
+            reason = ""
+        case .existing(let ov):
+            date = Self.parseISO(ov.date) ?? Date()
+            isClosed = ov.isClosed == true
+            overrideHours = (ov.openTime != nil || ov.closeTime != nil)
+            if let o = ov.openTime, let (h, m) = TimeOfDay.parse(o) {
+                openTime = Self.makeDate(h: h, m: m)
+            }
+            if let c = ov.closeTime, let (h, m) = TimeOfDay.parse(c) {
+                closeTime = Self.makeDate(h: h, m: m)
+            }
+            reason = ov.reason ?? ""
+        }
+    }
+
+    private func save() async {
+        isSaving = true
+        error = nil
+
+        let df = DateFormatter()
+        df.dateFormat = "yyyy-MM-dd"
+        df.locale = Locale(identifier: "en_US_POSIX")
+
+        let cleanReason: String? = {
+            let t = reason.trimmingCharacters(in: .whitespaces)
+            return t.isEmpty ? nil : t
+        }()
+
+        let upsert: VenueScheduleOverrideUpsert
+        if isClosed {
+            upsert = VenueScheduleOverrideUpsert(
+                date: df.string(from: date),
+                isClosed: true,
+                openTime: nil,
+                closeTime: nil,
+                reason: cleanReason
+            )
+        } else if overrideHours {
+            upsert = VenueScheduleOverrideUpsert(
+                date: df.string(from: date),
+                isClosed: false,
+                openTime: TimeOfDay.dbString(from: openTime),
+                closeTime: TimeOfDay.dbString(from: closeTime),
+                reason: cleanReason
+            )
+        } else {
+            upsert = VenueScheduleOverrideUpsert(
+                date: df.string(from: date),
+                isClosed: false,
+                openTime: nil,
+                closeTime: nil,
+                reason: cleanReason
+            )
+        }
+
+        do {
+            try await venue.upsertOverride(upsert)
+            dismiss()
+        } catch {
+            self.error = error.localizedDescription
+        }
+        isSaving = false
+    }
+
+    private static func makeDate(h: Int, m: Int) -> Date {
+        var c = DateComponents()
+        c.hour = h
+        c.minute = m
+        return Calendar.current.date(from: c) ?? Date()
+    }
+
+    private static func parseISO(_ iso: String) -> Date? {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f.date(from: iso)
     }
 }
 
