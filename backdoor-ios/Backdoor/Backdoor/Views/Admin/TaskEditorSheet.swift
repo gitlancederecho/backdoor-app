@@ -3,6 +3,10 @@ import SwiftUI
 struct TaskEditorSheet: View {
     let task: TaskTemplate?
     @Bindable var adminVM: AdminViewModel
+    /// Pre-seed folder_id on NEW tasks. Used when the admin taps "+ New"
+    /// from inside a folder — we open the editor with that folder
+    /// already selected. Ignored for edit mode (task != nil).
+    var initialFolderId: UUID? = nil
     @Environment(AuthViewModel.self) private var auth
     @Environment(LanguageManager.self) private var lang
     @Environment(VenueViewModel.self) private var venue
@@ -22,6 +26,8 @@ struct TaskEditorSheet: View {
     @State private var startTime: Date = defaultTime(hour: 17)
     @State private var hasEndTime = false
     @State private var endTime: Date = defaultTime(hour: 18)
+    @State private var folderId: UUID? = nil
+    @State private var showingFolderPicker = false
     @State private var isSaving = false
     @State private var error: String?
 
@@ -129,6 +135,27 @@ struct TaskEditorSheet: View {
                                     chipButton(priorityLabel(p), selected: priority == p) { priority = p }
                                 }
                             }
+                        }
+
+                        field(tr("folder")) {
+                            Button {
+                                showingFolderPicker = true
+                            } label: {
+                                HStack(spacing: 10) {
+                                    if let fid = folderId,
+                                       let f = adminVM.folders.first(where: { $0.id == fid }) {
+                                        Image(systemName: "folder.fill").foregroundColor(.bdAccent)
+                                        Text(f.name).foregroundColor(.white)
+                                    } else {
+                                        Image(systemName: "tray").foregroundColor(.gray)
+                                        Text(tr("unfiled")).foregroundColor(.gray)
+                                    }
+                                    Spacer()
+                                    Image(systemName: "chevron.down").foregroundColor(.gray)
+                                }
+                                .inputStyle()
+                            }
+                            .buttonStyle(.plain)
                         }
 
                         field(tr("assign_to")) {
@@ -282,10 +309,40 @@ struct TaskEditorSheet: View {
             )
             .environment(lang)
         }
+        .sheet(isPresented: $showingFolderPicker) {
+            SearchablePickerSheet<String>(
+                title: tr("folder"),
+                rows: folderPickerRows,
+                selectedID: folderId?.uuidString ?? "__unfiled__",
+                onPick: { id in
+                    if id == "__unfiled__" {
+                        folderId = nil
+                    } else if let uuid = UUID(uuidString: id) {
+                        folderId = uuid
+                    }
+                }
+            )
+            .environment(lang)
+        }
+    }
+
+    private var folderPickerRows: [PickerRow<String>] {
+        var rows: [PickerRow<String>] = [
+            PickerRow<String>(id: "__unfiled__", label: tr("unfiled"), isSpecial: true)
+        ]
+        rows.append(contentsOf: adminVM.folders.map { f in
+            PickerRow<String>(id: f.id.uuidString, label: f.name, sublabel: f.description)
+        })
+        return rows
     }
 
     private func populate() {
-        guard let t = task else { return }
+        guard let t = task else {
+            // New-task case: seed folderId from the launch context
+            // (e.g. the admin tapped "+ New" inside a folder).
+            folderId = initialFolderId
+            return
+        }
         title = t.title
         titleJa = t.titleJa ?? ""
         category = t.category
@@ -294,6 +351,7 @@ struct TaskEditorSheet: View {
         recurrenceType = t.recurrenceType ?? .daily
         days = Set(t.recurrenceDays ?? [])
         priority = t.priority
+        folderId = t.folderId
 
         if let s = t.startTime, let (h, m) = TimeOfDay.parse(s) {
             hasStartTime = true
@@ -330,7 +388,8 @@ struct TaskEditorSheet: View {
             priority: priority,
             createdBy: auth.staff?.id,
             startTime: hasStartTime ? TimeOfDay.dbString(from: startTime) : nil,
-            endTime: hasEndTime ? TimeOfDay.dbString(from: endTime) : nil
+            endTime: hasEndTime ? TimeOfDay.dbString(from: endTime) : nil,
+            folderId: folderId
         )
         let bd = BusinessDay.currentBusinessDayISO(
             schedule: venue.schedule,
@@ -340,6 +399,14 @@ struct TaskEditorSheet: View {
         do {
             if let t = task {
                 try await adminVM.updateTask(id: t.id, newTask, businessDay: bd)
+                // `updateTask` uses the default Encodable path, which
+                // omits nil Optionals — so if the admin just switched
+                // the folder to Unfiled, the DB would keep the old
+                // folder_id. Force the explicit null via `moveTask`,
+                // which uses a custom encoder.
+                if t.folderId != folderId {
+                    try await adminVM.moveTask(t, toFolder: folderId)
+                }
             } else {
                 try await adminVM.createTask(newTask, businessDay: bd)
             }

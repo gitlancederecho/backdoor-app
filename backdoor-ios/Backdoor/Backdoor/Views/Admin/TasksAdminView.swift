@@ -17,8 +17,15 @@ struct TasksAdminView: View {
     @Environment(VenueViewModel.self) private var venue
     @State private var editingTask: TaskTemplate?
     @State private var showingNew = false
+    @State private var showingNewFolder = false
 
-    // Filters
+    /// Drill-in state. Non-nil = `FolderTasksView` for that folder is
+    /// shown instead of the root (unfiled + folders). Embedded inside
+    /// the Admin tab, so we can't rely on NavigationStack cleanly —
+    /// just swap the view with a slide animation.
+    @State private var currentFolder: TaskFolder?
+
+    // Filters (scoped to the Unfiled section at the root view).
     @State private var searchText: String = ""
     @State private var recurrenceFilter: TasksRecurrenceFilter = .all
     @State private var categoryFilter: String? = nil       // nil = all; otherwise a category key
@@ -35,52 +42,92 @@ struct TasksAdminView: View {
     @State private var undoDismissTask: Task<Void, Never>?
     private let undoWindow: Duration = .seconds(5)
 
-    // Edit mode + bulk selection
+    // Edit mode + bulk selection (Unfiled scope only — folder rows
+    // aren't selectable from the root).
     @State private var editMode: EditMode = .inactive
     @State private var selectedIds: Set<UUID> = []
     @State private var showBulkDeleteConfirm = false
+    @State private var showingMoveTarget = false
 
+    /// Filtered Unfiled templates (`folder_id IS NULL`). The root view's
+    /// filter bar applies to this section only; folder rows are not
+    /// touched by search or pills.
     private var filteredTemplates: [TaskTemplate] {
         let q = searchText.trimmingCharacters(in: .whitespaces)
-        return adminVM.taskTemplates.filter { t in
-            switch recurrenceFilter {
-            case .all: break
-            case .recurring: if !t.isRecurring { return false }
-            case .oneOff:    if t.isRecurring  { return false }
+        return adminVM.taskTemplates
+            .filter { $0.folderId == nil }
+            .filter { t in
+                switch recurrenceFilter {
+                case .all: break
+                case .recurring: if !t.isRecurring { return false }
+                case .oneOff:    if t.isRecurring  { return false }
+                }
+                if let c = categoryFilter, t.category != c { return false }
+                switch assigneeFilter {
+                case .all: break
+                case .anyone: if t.assignedTo != nil { return false }
+                case .staff(let id): if t.assignedTo != id { return false }
+                }
+                if !q.isEmpty {
+                    // Match either the English title or the Japanese title so
+                    // the search works regardless of the active UI language.
+                    let en = t.title.localizedCaseInsensitiveContains(q)
+                    let ja = t.titleJa?.localizedCaseInsensitiveContains(q) ?? false
+                    if !en && !ja { return false }
+                }
+                return true
             }
-            if let c = categoryFilter, t.category != c { return false }
-            switch assigneeFilter {
-            case .all: break
-            case .anyone: if t.assignedTo != nil { return false }
-            case .staff(let id): if t.assignedTo != id { return false }
-            }
-            if !q.isEmpty {
-                // Match either the English title or the Japanese title so
-                // the search works regardless of the active UI language.
-                let en = t.title.localizedCaseInsensitiveContains(q)
-                let ja = t.titleJa?.localizedCaseInsensitiveContains(q) ?? false
-                if !en && !ja { return false }
-            }
-            return true
-        }
     }
 
     var body: some View {
+        Group {
+            if let folder = currentFolder {
+                FolderTasksView(
+                    folder: folder,
+                    adminVM: adminVM,
+                    onBack: {
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            currentFolder = nil
+                        }
+                    }
+                )
+                .environment(auth)
+                .environment(lang)
+                .environment(venue)
+                .transition(.move(edge: .trailing))
+            } else {
+                rootView
+                    .transition(.move(edge: .leading))
+            }
+        }
+        .animation(.easeInOut(duration: 0.25), value: currentFolder?.id)
+    }
+
+    private var rootView: some View {
         ZStack(alignment: .bottomTrailing) {
             VStack(spacing: 0) {
                 filterBar
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
                 Divider().background(Color.bdBorder)
-                tasksList
+                rootList
                 if editMode.isEditing, !selectedIds.isEmpty {
                     bulkActionBar
                 }
             }
 
             if !editMode.isEditing {
-                Button {
-                    showingNew = true
+                Menu {
+                    Button {
+                        showingNew = true
+                    } label: {
+                        Label(tr("new_task"), systemImage: "plus.circle")
+                    }
+                    Button {
+                        showingNewFolder = true
+                    } label: {
+                        Label(tr("new_folder"), systemImage: "folder.badge.plus")
+                    }
                 } label: {
                     Image(systemName: "plus")
                         .font(.title2.bold())
@@ -113,6 +160,25 @@ struct TasksAdminView: View {
                 .environment(auth)
                 .environment(lang)
                 .environment(venue)
+        }
+        .sheet(isPresented: $showingNewFolder) {
+            FolderEditorSheet(folder: nil, adminVM: adminVM)
+                .environment(lang)
+        }
+        .sheet(isPresented: $showingMoveTarget) {
+            MoveToFolderPicker(
+                currentFolderId: nil,  // root = Unfiled scope
+                folders: adminVM.folders,
+                onPick: { target in
+                    let ids = Array(selectedIds)
+                    Task {
+                        await adminVM.moveTasks(ids: ids, toFolder: target)
+                        selectedIds = []
+                        editMode = .inactive
+                    }
+                }
+            )
+            .environment(lang)
         }
         .sheet(isPresented: $showingCategoryPicker) {
             SearchablePickerSheet<String>(
@@ -162,25 +228,61 @@ struct TasksAdminView: View {
         }
     }
 
-    private var tasksList: some View {
+    /// Root list: Unfiled tasks (section, filterable) at the top,
+    /// Folders list beneath. Drill-in via tap → `currentFolder = folder`.
+    private var rootList: some View {
         List(selection: $selectedIds) {
-            ForEach(filteredTemplates) { task in
-                TaskTemplateRow(
-                    task: task,
-                    categories: adminVM.categories,
-                    isEditing: editMode.isEditing,
-                    onEdit: { editingTask = task },
-                    onDelete: { handleDelete(task) }
-                )
-                .tag(task.id)
-                .listRowBackground(Color.clear)
-                .listRowSeparator(.hidden)
-                .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
-                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                    Button(role: .destructive) { handleDelete(task) } label: {
-                        Label(tr("delete"), systemImage: "trash")
+            if !filteredTemplates.isEmpty {
+                Section {
+                    ForEach(filteredTemplates) { task in
+                        TaskTemplateRow(
+                            task: task,
+                            categories: adminVM.categories,
+                            isEditing: editMode.isEditing,
+                            onEdit: { editingTask = task },
+                            onDelete: { handleDelete(task) }
+                        )
+                        .tag(task.id)
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button(role: .destructive) { handleDelete(task) } label: {
+                                Label(tr("delete"), systemImage: "trash")
+                            }
+                        }
                     }
+                } header: {
+                    sectionHeader(tr("unfiled"))
                 }
+            }
+
+            if !adminVM.folders.isEmpty {
+                Section {
+                    ForEach(adminVM.folders) { folder in
+                        folderRow(folder)
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                            .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                            .selectionDisabled()
+                    }
+                } header: {
+                    sectionHeader(tr("folders"))
+                }
+            }
+
+            // Empty state — shown only when there's literally nothing
+            // to see (no unfiled tasks AND no folders).
+            if filteredTemplates.isEmpty && adminVM.folders.isEmpty {
+                Text(tr("no_folders"))
+                    .font(.subheadline)
+                    .foregroundColor(.gray)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(16)
+                    .cardStyle()
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                    .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
             }
         }
         .listStyle(.plain)
@@ -189,12 +291,74 @@ struct TasksAdminView: View {
         .environment(\.editMode, $editMode)
     }
 
+    @ViewBuilder
+    private func sectionHeader(_ text: String) -> some View {
+        Text(text.uppercased())
+            .font(.caption.weight(.semibold))
+            .foregroundColor(.gray)
+            .tracking(1.2)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 6)
+    }
+
+    @ViewBuilder
+    private func folderRow(_ folder: TaskFolder) -> some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.25)) {
+                currentFolder = folder
+            }
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "folder.fill")
+                    .foregroundColor(.bdAccent)
+                    .font(.system(size: 18))
+                    .frame(width: 28)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(folder.name)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundColor(.white)
+                    Text(String(format: tr("tasks_count"), adminVM.taskCount(inFolder: folder.id)))
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.gray.opacity(0.5))
+            }
+            .padding(14)
+            .cardStyle()
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
     private var bulkActionBar: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
+            Button {
+                if selectedIds.count == filteredTemplates.count {
+                    selectedIds = []
+                } else {
+                    selectedIds = Set(filteredTemplates.map(\.id))
+                }
+            } label: {
+                Text(selectedIds.count == filteredTemplates.count ? tr("deselect_all") : tr("select_all"))
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.bdAccent)
+            }
+            .buttonStyle(.plain)
+
             Text(String(format: tr("selected_count"), selectedIds.count))
-                .font(.subheadline)
-                .foregroundColor(.white)
+                .font(.caption)
+                .foregroundColor(.gray)
+
             Spacer()
+
+            Button { showingMoveTarget = true } label: {
+                Label(tr("move_to_folder"), systemImage: "folder")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundColor(.bdAccent)
+            }
             Button {
                 showBulkDeleteConfirm = true
             } label: {
@@ -391,7 +555,9 @@ struct TasksAdminView: View {
     }
 }
 
-private struct TaskTemplateRow: View {
+/// Shared row used by both `TasksAdminView` (at the Unfiled section)
+/// and `FolderTasksView` (inside a folder). File-scope visibility.
+struct TaskTemplateRow: View {
     let task: TaskTemplate
     let categories: [Category]
     let isEditing: Bool

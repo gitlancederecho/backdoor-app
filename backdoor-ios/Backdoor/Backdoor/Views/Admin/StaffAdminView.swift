@@ -158,10 +158,30 @@ struct StaffAdminView: View {
     }
 
     private var bulkActionBar: some View {
-        HStack(spacing: 12) {
+        // Select-all excludes the caller's own row (same rule as
+        // `effectiveSelection`) so the label always reflects what
+        // the bulk activate/deactivate actions would actually touch.
+        let selectableIds = Set(filteredStaff.map(\.id))
+            .subtracting(auth.staff.map { [$0.id] } ?? [])
+        let allSelected = !selectableIds.isEmpty && selectableIds.isSubset(of: selectedIds)
+        return HStack(spacing: 10) {
+            Button {
+                if allSelected {
+                    selectedIds.subtract(selectableIds)
+                } else {
+                    selectedIds.formUnion(selectableIds)
+                }
+            } label: {
+                Text(allSelected ? tr("deselect_all") : tr("select_all"))
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.bdAccent)
+            }
+            .buttonStyle(.plain)
+            .disabled(selectableIds.isEmpty)
+
             Text(String(format: tr("selected_count"), effectiveSelection.count))
-                .font(.subheadline)
-                .foregroundColor(.white)
+                .font(.caption)
+                .foregroundColor(.gray)
             Spacer()
             Button {
                 showBulkActivateConfirm = true

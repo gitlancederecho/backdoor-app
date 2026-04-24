@@ -160,10 +160,28 @@ struct CategoriesAdminView: View {
     // MARK: - Bulk action bar
 
     private var bulkActionBar: some View {
-        HStack(spacing: 12) {
+        // Select-all toggles over *deletable* keys (built-ins skip).
+        // Keeps the label accurate: "Select all" = all non-builtin rows.
+        let deletableKeys = Set(adminVM.categories.filter { !$0.isBuiltin }.map(\.key))
+        let allSelected = !deletableKeys.isEmpty && deletableKeys.isSubset(of: selectedKeys)
+        return HStack(spacing: 10) {
+            Button {
+                if allSelected {
+                    selectedKeys.subtract(deletableKeys)
+                } else {
+                    selectedKeys.formUnion(deletableKeys)
+                }
+            } label: {
+                Text(allSelected ? tr("deselect_all") : tr("select_all"))
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.bdAccent)
+            }
+            .buttonStyle(.plain)
+            .disabled(deletableKeys.isEmpty)
+
             Text(String(format: tr("selected_count"), effectiveDeletableSelection.count))
-                .font(.subheadline)
-                .foregroundColor(.white)
+                .font(.caption)
+                .foregroundColor(.gray)
             Spacer()
             Button {
                 showBulkDeleteConfirm = true
