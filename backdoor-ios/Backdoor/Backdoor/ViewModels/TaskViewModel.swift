@@ -126,6 +126,49 @@ final class TaskViewModel {
         await logEvent(dailyTaskId: task.id, actorId: staffId, type: .started)
     }
 
+    /// Reassign a single daily_task (not the template) to a specific
+    /// staff member, or nil to clear. Writes the new assigned_to and
+    /// logs a `reassigned` task_event so the change shows in History.
+    /// No-op when the new assignee matches the old one.
+    ///
+    /// Custom encoding below so that `assigned_to = nil` goes on the
+    /// wire as explicit `null` — Swift's default Encodable omits nil
+    /// Optional keys, which Postgres would interpret as "leave column
+    /// alone" and quietly fail to unassign.
+    func reassign(task: DailyTask, to newAssignee: UUID?, actorId: UUID) async throws {
+        guard task.assignedTo != newAssignee else { return }
+
+        struct Patch: Encodable {
+            let assignedTo: UUID?
+            enum CodingKeys: String, CodingKey { case assignedTo = "assigned_to" }
+            func encode(to encoder: Encoder) throws {
+                var c = encoder.container(keyedBy: CodingKeys.self)
+                try c.encode(assignedTo, forKey: .assignedTo)  // emits null when nil
+            }
+        }
+
+        // Optimistic local update so the UI reflects the change before
+        // the round-trip finishes.
+        if let idx = tasks.firstIndex(where: { $0.id == task.id }) {
+            tasks[idx].assignedTo = newAssignee
+        }
+
+        try await supabase
+            .from("daily_tasks")
+            .update(Patch(assignedTo: newAssignee))
+            .eq("id", value: task.id)
+            .execute()
+
+        let event = NewTaskEvent(
+            dailyTaskId: task.id,
+            actorId: actorId,
+            eventType: TaskEventType.reassigned.rawValue,
+            fromValue: task.assignedTo?.uuidString,
+            toValue: newAssignee?.uuidString
+        )
+        _ = try? await supabase.from("task_events").insert(event).execute()
+    }
+
     /// Patch just the note and/or photo on a daily_task — used when an
     /// admin/staff edits these fields on an already-completed row.
     /// Logs either `note_added` (empty → non-empty), `note_updated`

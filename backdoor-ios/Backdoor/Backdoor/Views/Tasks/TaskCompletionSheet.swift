@@ -1,5 +1,6 @@
 import SwiftUI
 import PhotosUI
+import Supabase
 
 struct TaskCompletionSheet: View {
     let task: DailyTask
@@ -17,6 +18,9 @@ struct TaskCompletionSheet: View {
     @State private var showHistory = false
     @State private var events: [TaskEvent] = []
     @State private var isLoadingHistory = false
+
+    // Reassign — fetched on-demand, admin-only.
+    @State private var reassignableStaff: [Staff] = []
 
     private var isDone: Bool { task.status == .completed }
     private var canUndo: Bool {
@@ -43,19 +47,23 @@ struct TaskCompletionSheet: View {
                     // Pills — category / priority (only if not normal) / status
                     pillsRow
 
-                    // Meta — assignment
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(spacing: 6) {
-                            Text("\(tr("assign_to")):").foregroundColor(.gray)
-                            if let a = task.assignee {
-                                AvatarView(initials: a.initials, url: a.avatarUrl, size: 20)
-                                Text(a.name).foregroundColor(.white)
-                            } else {
-                                Text(tr("assign_anyone")).foregroundColor(.gray)
-                            }
+                    // Meta — assignment (with inline Reassign menu for
+                    // admins). Reassign only changes the assigned_to of
+                    // this daily_task, not the template.
+                    HStack(spacing: 6) {
+                        Text("\(tr("assign_to")):").foregroundColor(.gray)
+                        if let a = task.assignee {
+                            AvatarView(initials: a.initials, url: a.avatarUrl, size: 20)
+                            Text(a.name).foregroundColor(.white)
+                        } else {
+                            Text(tr("assign_anyone")).foregroundColor(.gray)
                         }
-                        .font(.subheadline)
+                        Spacer()
+                        if auth.isAdmin {
+                            reassignMenu
+                        }
                     }
+                    .font(.subheadline)
 
                     // Expected time window, if the template specified one
                     if let windowText = expectedWindowText {
@@ -226,10 +234,55 @@ struct TaskCompletionSheet: View {
         .onAppear {
             note = task.note ?? ""
             Task { await loadHistory() }
+            Task { await loadReassignableStaffIfNeeded() }
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         .preferredColorScheme(.dark)
+    }
+
+    // MARK: - Reassign (admin-only inline menu)
+
+    private var reassignMenu: some View {
+        Menu {
+            Button(tr("assign_anyone")) { Task { await performReassign(to: nil) } }
+            if !reassignableStaff.isEmpty { Divider() }
+            ForEach(reassignableStaff) { s in
+                Button {
+                    Task { await performReassign(to: s.id) }
+                } label: {
+                    HStack {
+                        Text(s.name)
+                        if task.assignedTo == s.id { Image(systemName: "checkmark") }
+                    }
+                }
+            }
+        } label: {
+            Text(tr("reassign"))
+                .font(.caption.weight(.semibold))
+                .foregroundColor(.bdAccent)
+        }
+    }
+
+    private func loadReassignableStaffIfNeeded() async {
+        guard auth.isAdmin, reassignableStaff.isEmpty else { return }
+        let rows: [Staff] = (try? await supabase
+            .from("staff")
+            .select()
+            .eq("is_active", value: true)
+            .order("name")
+            .execute()
+            .value) ?? []
+        reassignableStaff = rows
+    }
+
+    private func performReassign(to newAssignee: UUID?) async {
+        guard let actor = auth.staff?.id else { return }
+        do {
+            try await taskVM.reassign(task: task, to: newAssignee, actorId: actor)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     // MARK: - Pills + time window
