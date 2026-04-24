@@ -5,37 +5,50 @@ import SwiftUI
 struct HistoryAdminView: View {
     @Environment(AdminViewModel.self) private var adminVM
     @Environment(LanguageManager.self) private var lang
+    @Environment(\.dismiss) private var dismiss
     @State private var vm = HistoryViewModel()
     @State private var selectedTask: DailyTask?
     @State private var showingActorPicker = false
 
     var body: some View {
         let _ = lang.current
-        ZStack {
-            Color.bgPrimary.ignoresSafeArea()
-            VStack(spacing: 0) {
-                filterBar
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
+        NavigationStack {
+            ZStack {
+                Color.bgPrimary.ignoresSafeArea()
+                VStack(spacing: 0) {
+                    filterBar
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
 
-                Divider().background(Color.bdBorder)
+                    Divider().background(Color.bdBorder)
 
-                if vm.isLoading && vm.events.isEmpty {
-                    loadingState
-                } else if let err = vm.error, vm.events.isEmpty {
-                    // Only flip to the full-screen error state when we
-                    // have nothing to show. A transient error during
-                    // refresh shouldn't blank the list.
-                    errorState(err)
-                } else if vm.groupedByDate.isEmpty {
-                    // Covers both "no fetched events" and "search
-                    // narrowed to zero matches" with the same UI.
-                    emptyState
-                } else {
-                    eventList
+                    if vm.isLoading && vm.events.isEmpty {
+                        loadingState
+                    } else if let err = vm.error, vm.events.isEmpty {
+                        // Only flip to the full-screen error state when we
+                        // have nothing to show. A transient error during
+                        // refresh shouldn't blank the list.
+                        errorState(err)
+                    } else if vm.groupedByDate.isEmpty {
+                        // Covers both "no fetched events" and "search
+                        // narrowed to zero matches" with the same UI.
+                        emptyState
+                    } else {
+                        eventList
+                    }
+                }
+            }
+            .navigationTitle(tr("admin_history"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Color.bgCard, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(tr("close")) { dismiss() }.foregroundColor(.gray)
                 }
             }
         }
+        .preferredColorScheme(.dark)
         .task { await vm.load() }
         .refreshable { await vm.refresh() }
         .sheet(item: $selectedTask) { task in

@@ -141,7 +141,7 @@ gone.
 
 Bottom tabs (varies by role):
 - **Today** — task board for a business day. Rich header: prev/next date chevrons, tappable date → graphical DatePicker, venue status pill (Open / Prep / Closed / Between shifts), Everyone/Mine pills, "Today" shortcut when off-day. Swipe left/right shifts the date. People-search magnifying glass at top-right opens `PeopleSheet`.
-- **Admin** (admin only) — horizontally-scrolled tabs: Overview · Tasks · Categories · Staff · Hours · History.
+- **Admin** (admin only) — four non-scrolling sub-tabs: Overview · Tasks · Categories · Staff. Two small icon buttons at the top-left of the header open **Hours** (`clock.fill`) and **History** (`clock.arrow.circlepath`) as sheets — each wrapped in a `NavigationStack` with a `Close` toolbar button (cancellationAction).
 - **Profile** — identity card, role-specific insight (admin: active staff count / templates created / reassignments; staff: next pending task today), 2×2 stats grid, recent activity, language picker, sign out.
 
 Key reusables in `backdoor-ios/Backdoor/Backdoor/Views/Components/`:
@@ -157,19 +157,6 @@ Admin edit-mode pattern is in place on Tasks, Categories, Staff — `List(select
 - **Optional UUID in PostgREST `update` doesn't clear the column.** Swift's default `JSONEncoder` *omits* nil Optionals — Postgres reads that as "no change." To actually unassign (set null), use a custom Encodable that calls `container.encode(_:forKey:)` (not `encodeIfPresent`). See `TaskViewModel.reassign` in commit `f4d4930`.
 - **Cloudflare blocks Python's default User-Agent on `api.supabase.com`.** Management API calls must go through `curl`, not `urllib.request`, unless you set a custom UA. Recipe above.
 - **Supabase Swift + SwiftUI `.refreshable` cancellation.** SwiftUI cancels the `.refreshable` Task when the view re-renders mid-fetch (Observable mutations trigger re-render). `CancellationError` then lands in the catch-all and clobbers state. Treat it as benign — return silently and keep existing data.
-
-## Next task (pending)
-
-Admin → top-nav refactor:
-- **Remove** `History` and `Hours` from the horizontally-scrolled Admin tab row.
-- **Move** them to the top-left of the Admin view as small icon buttons (gearshape-ish for Hours, clock-arrow-circlepath-ish for History) that each open their existing view as a sheet (or navigation).
-- Bottom Admin tabs should then be: Overview · Tasks · Categories · Staff — a cleaner, non-scrolling set.
-- Goal: fewer nested horizontal tabs, top-right gets discoverable "secondary admin actions" icons.
-
-Files to touch:
-- `backdoor-ios/Backdoor/Backdoor/Views/Admin/AdminView.swift` — drop `.history` and `.hours` from `AdminTab`, render the corresponding views only via sheet presentations triggered from new top-bar icon buttons.
-- Keep `HoursAdminView` and `HistoryAdminView` as-is — they'll just be presented modally now.
-- Might need to add a `Close` button to each for the sheet dismiss (they were tab contents before).
 
 ## Don'ts
 

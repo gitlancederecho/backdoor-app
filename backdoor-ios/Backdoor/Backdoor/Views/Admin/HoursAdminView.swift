@@ -4,6 +4,7 @@ import SwiftUI
 struct HoursAdminView: View {
     @Environment(VenueViewModel.self) private var venue
     @Environment(LanguageManager.self) private var lang
+    @Environment(\.dismiss) private var dismiss
 
     @State private var editingDay: VenueDay?
     @State private var editingTimezone = false
@@ -18,6 +19,45 @@ struct HoursAdminView: View {
 
     var body: some View {
         let _ = lang.current
+        NavigationStack {
+            ZStack {
+                Color.bgPrimary.ignoresSafeArea()
+                content
+            }
+            .navigationTitle(tr("admin_hours"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Color.bgCard, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(tr("close")) { dismiss() }.foregroundColor(.gray)
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+        .sheet(item: $editingDay) { day in
+            DayScheduleSheet(day: day)
+                .environment(venue)
+                .environment(lang)
+        }
+        .sheet(isPresented: $editingTimezone) {
+            TimezonePickerSheet(current: venue.settings.timezone)
+                .environment(venue)
+                .environment(lang)
+        }
+        .onAppear {
+            prepBufferMinutes = Int(venue.settings.prepBufferMinutes)
+            graceMinutes = Int(venue.settings.gracePeriodMinutes)
+        }
+        .onChange(of: venue.settings.prepBufferMinutes) { _, new in
+            prepBufferMinutes = Int(new)
+        }
+        .onChange(of: venue.settings.gracePeriodMinutes) { _, new in
+            graceMinutes = Int(new)
+        }
+    }
+
+    private var content: some View {
         ScrollView {
             VStack(spacing: 24) {
                 // Timezone
@@ -115,26 +155,6 @@ struct HoursAdminView: View {
                 Spacer().frame(height: 24)
             }
             .padding(.top, 8)
-        }
-        .sheet(item: $editingDay) { day in
-            DayScheduleSheet(day: day)
-                .environment(venue)
-                .environment(lang)
-        }
-        .sheet(isPresented: $editingTimezone) {
-            TimezonePickerSheet(current: venue.settings.timezone)
-                .environment(venue)
-                .environment(lang)
-        }
-        .onAppear {
-            prepBufferMinutes = Int(venue.settings.prepBufferMinutes)
-            graceMinutes = Int(venue.settings.gracePeriodMinutes)
-        }
-        .onChange(of: venue.settings.prepBufferMinutes) { _, new in
-            prepBufferMinutes = Int(new)
-        }
-        .onChange(of: venue.settings.gracePeriodMinutes) { _, new in
-            graceMinutes = Int(new)
         }
     }
 
