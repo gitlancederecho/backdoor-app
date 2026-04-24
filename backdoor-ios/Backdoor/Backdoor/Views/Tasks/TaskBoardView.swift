@@ -152,10 +152,22 @@ struct TaskBoardView: View {
                             .padding(.horizontal, 16)
                             .padding(.top, 8)
 
+                        // Yasumi banner — shows any time the viewed date
+                        // has an effective `isClosed`. Separate from the
+                        // empty state so admins still see why lingering
+                        // tasks (from a pre-override generation) are on
+                        // a closed day.
+                        if boardDay?.isClosed == true {
+                            closedBanner
+                                .padding(.horizontal, 16)
+                        }
+
                         if visibleTasks.isEmpty {
-                            Text(filter == .mine ? tr("no_tasks_mine") : tr("no_tasks_today"))
+                            Text(emptyStateText)
                                 .foregroundColor(.gray)
+                                .multilineTextAlignment(.center)
                                 .frame(maxWidth: .infinity)
+                                .padding(.horizontal, 24)
                                 .padding(.top, 40)
                         }
 
@@ -373,6 +385,43 @@ struct TaskBoardView: View {
             return ("\(base.0) · \(reason)", base.1)
         }
         return base
+    }
+
+    private var closedBanner: some View {
+        let reason = venue.override(for: vm.date)?.reason
+        return HStack(spacing: 10) {
+            Image(systemName: "moon.zzz.fill")
+                .foregroundColor(.statusPending)
+                .font(.system(size: 18))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(tr("status_closed_today"))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(.white)
+                if let reason, !reason.isEmpty {
+                    Text(reason)
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                }
+            }
+            Spacer()
+        }
+        .padding(12)
+        .background(Color.statusPending.opacity(0.12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.statusPending.opacity(0.3), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    private var emptyStateText: String {
+        // On a closed day, the generic "no tasks today" is misleading.
+        // Prefer "Closed today" so staff know there's nothing to do
+        // (vs. "we haven't loaded yet" or "something's broken").
+        if boardDay?.isClosed == true {
+            return tr("no_tasks_closed")
+        }
+        return filter == .mine ? tr("no_tasks_mine") : tr("no_tasks_today")
     }
 
     private var businessDayHint: String {

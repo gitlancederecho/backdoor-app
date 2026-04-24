@@ -100,6 +100,7 @@ private let enStrings: [String: String] = [
     // Task board
     "no_tasks_today": "No tasks today.",
     "no_tasks_mine": "No tasks assigned to you today.",
+    "no_tasks_closed": "Venue is closed — no tasks today.",
     "no_tasks": "No tasks",
     "tasks_done_progress": "%@/%@ done · %@%%",
 
@@ -386,6 +387,7 @@ private let jaStrings: [String: String] = [
     // Task board
     "no_tasks_today": "今日のタスクはありません。",
     "no_tasks_mine": "自分に割り当てられたタスクはありません。",
+    "no_tasks_closed": "本日は休業 — タスクはありません。",
     "no_tasks": "タスクなし",
     "tasks_done_progress": "%@/%@ 完了 · %@%%",
 

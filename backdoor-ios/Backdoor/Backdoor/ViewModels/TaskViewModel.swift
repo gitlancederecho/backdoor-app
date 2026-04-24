@@ -47,7 +47,14 @@ final class TaskViewModel {
                 .order("created_at")
                 .execute()
                 .value
-            tasks = result
+            // Hide daily_tasks whose template has been soft-deleted,
+            // UNLESS the row is already completed — completed rows are
+            // intentional history we want to keep visible (and they
+            // include auto-retired one-offs, whose template gets
+            // flipped inactive on completion).
+            tasks = result.filter { dt in
+                dt.task?.isActive == true || dt.status == .completed
+            }
             error = nil
         } catch {
             self.error = error.localizedDescription
