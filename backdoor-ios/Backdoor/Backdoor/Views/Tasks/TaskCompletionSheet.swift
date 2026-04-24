@@ -21,6 +21,7 @@ struct TaskCompletionSheet: View {
 
     // Reassign — fetched on-demand, admin-only.
     @State private var reassignableStaff: [Staff] = []
+    @State private var showingReassignPicker = false
 
     // Comments
     @State private var comments: [TaskComment] = []
@@ -28,9 +29,30 @@ struct TaskCompletionSheet: View {
     @State private var isPostingComment = false
     @State private var commentsRealtimeTask: Task<Void, Never>?
 
-    private var isDone: Bool { task.status == .completed }
+    /// Live view of the task — re-reads from the VM each access so
+    /// optimistic updates (reassign, complete, undo, note edits)
+    /// surface in the sheet without closing and re-opening. Falls
+    /// back to the original snapshot if the row has disappeared
+    /// (shouldn't happen while the sheet is live).
+    private var currentTask: DailyTask {
+        taskVM.tasks.first(where: { $0.id == task.id }) ?? task
+    }
+
+    /// Assignee that reflects the latest assignedTo, even if the VM's
+    /// joined `assignee` hasn't been replaced yet after an optimistic
+    /// reassign. Checks the cached staff list as a fallback.
+    private var displayAssignee: Staff? {
+        let ct = currentTask
+        if let a = ct.assignee, a.id == ct.assignedTo { return a }
+        if let id = ct.assignedTo {
+            return reassignableStaff.first(where: { $0.id == id })
+        }
+        return nil
+    }
+
+    private var isDone: Bool { currentTask.status == .completed }
     private var canUndo: Bool {
-        isDone && (auth.isAdmin || task.completedBy == auth.staff?.id)
+        isDone && (auth.isAdmin || currentTask.completedBy == auth.staff?.id)
     }
 
     private var displayTitle: String {
@@ -58,7 +80,7 @@ struct TaskCompletionSheet: View {
                     // this daily_task, not the template.
                     HStack(spacing: 6) {
                         Text("\(tr("assign_to")):").foregroundColor(.gray)
-                        if let a = task.assignee {
+                        if let a = displayAssignee {
                             AvatarView(initials: a.initials, url: a.avatarUrl, size: 20)
                             Text(a.name).foregroundColor(.white)
                         } else {
@@ -80,21 +102,21 @@ struct TaskCompletionSheet: View {
                     }
 
                     // Trail — started / completed with duration
-                    if task.startedAt != nil || task.completedAt != nil {
+                    if currentTask.startedAt != nil || currentTask.completedAt != nil {
                         VStack(alignment: .leading, spacing: 6) {
-                            if let startedAt = task.startedAt {
+                            if let startedAt = currentTask.startedAt {
                                 trailRow(
                                     color: .statusPending,
                                     label: tr("started_label"),
-                                    actor: task.starter?.name,
+                                    actor: currentTask.starter?.name,
                                     time: startedAt
                                 )
                             }
-                            if let completedAt = task.completedAt {
+                            if let completedAt = currentTask.completedAt {
                                 trailRow(
                                     color: .statusDone,
                                     label: tr("completed_label"),
-                                    actor: task.completer?.name,
+                                    actor: currentTask.completer?.name,
                                     time: completedAt
                                 )
                             }
@@ -149,7 +171,7 @@ struct TaskCompletionSheet: View {
                                     .padding(8)
                                 }
                             }
-                        } else if let existingUrl = task.photoUrl, let url = URL(string: existingUrl) {
+                        } else if let existingUrl = currentTask.photoUrl, let url = URL(string: existingUrl) {
                             ZStack(alignment: .topTrailing) {
                                 AsyncImage(url: url) { img in
                                     img.resizable().scaledToFill()
@@ -215,7 +237,7 @@ struct TaskCompletionSheet: View {
                                 .buttonStyle(SecondaryButtonStyle())
                             }
                         } else {
-                            if task.status == .pending {
+                            if currentTask.status == .pending {
                                 Button(tr("start")) { Task { await startTask() } }
                                     .buttonStyle(SecondaryButtonStyle())
                             }
@@ -252,6 +274,22 @@ struct TaskCompletionSheet: View {
             commentsRealtimeTask?.cancel()
             commentsRealtimeTask = nil
         }
+        .sheet(isPresented: $showingReassignPicker) {
+            SearchablePickerSheet<String>(
+                title: tr("reassign"),
+                rows: reassignPickerRows,
+                selectedID: currentTask.assignedTo?.uuidString ?? "__none__",
+                onPick: { id in
+                    if id == "__none__" {
+                        Task { await performReassign(to: nil) }
+                    } else if let uuid = UUID(uuidString: id),
+                              let staff = reassignableStaff.first(where: { $0.id == uuid }) {
+                        Task { await performReassign(to: staff) }
+                    }
+                }
+            )
+            .environment(lang)
+        }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         .preferredColorScheme(.dark)
@@ -260,24 +298,14 @@ struct TaskCompletionSheet: View {
     // MARK: - Reassign (admin-only inline menu)
 
     private var reassignMenu: some View {
-        Menu {
-            Button(tr("assign_anyone")) { Task { await performReassign(to: nil) } }
-            if !reassignableStaff.isEmpty { Divider() }
-            ForEach(reassignableStaff) { s in
-                Button {
-                    Task { await performReassign(to: s.id) }
-                } label: {
-                    HStack {
-                        Text(s.name)
-                        if task.assignedTo == s.id { Image(systemName: "checkmark") }
-                    }
-                }
-            }
+        Button {
+            showingReassignPicker = true
         } label: {
             Text(tr("reassign"))
                 .font(.caption.weight(.semibold))
                 .foregroundColor(.bdAccent)
         }
+        .buttonStyle(.plain)
     }
 
     private func loadReassignableStaffIfNeeded() async {
@@ -292,13 +320,31 @@ struct TaskCompletionSheet: View {
         reassignableStaff = rows
     }
 
-    private func performReassign(to newAssignee: UUID?) async {
+    private func performReassign(to newStaff: Staff?) async {
         guard let actor = auth.staff?.id else { return }
         do {
-            try await taskVM.reassign(task: task, to: newAssignee, actorId: actor)
+            try await taskVM.reassign(task: currentTask, to: newStaff, actorId: actor)
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    /// Rows for the reassign picker: "Anyone" pseudo-row + one row per
+    /// active staff. Uses uuidString as the RowID so we can round-trip
+    /// through the generic picker's String key and map back in onPick.
+    private var reassignPickerRows: [PickerRow<String>] {
+        var rows: [PickerRow<String>] = [
+            PickerRow<String>(id: "__none__", label: tr("assign_anyone"), isSpecial: true)
+        ]
+        rows.append(contentsOf: reassignableStaff.map { s in
+            PickerRow<String>(
+                id: s.id.uuidString,
+                label: s.name,
+                sublabel: s.email,
+                avatar: (s.initials, s.avatarUrl)
+            )
+        })
+        return rows
     }
 
     // MARK: - Comments
@@ -529,7 +575,7 @@ struct TaskCompletionSheet: View {
     private var hasPostCompletionEdits: Bool {
         guard isDone else { return false }
         let trimmed = note.trimmingCharacters(in: .whitespaces)
-        let existingNote = task.note ?? ""
+        let existingNote = currentTask.note ?? ""
         let noteChanged = trimmed != existingNote
         let photoChanged = photoData != nil
         return noteChanged || photoChanged
@@ -540,7 +586,7 @@ struct TaskCompletionSheet: View {
         isSaving = true
         errorMessage = nil
         do {
-            var newPhotoUrl: String? = task.photoUrl
+            var newPhotoUrl: String? = currentTask.photoUrl
             if let data = photoData {
                 let mime = data.first == 0x89 ? "image/png" : "image/jpeg"
                 newPhotoUrl = try await uploadTaskPhoto(
@@ -548,7 +594,7 @@ struct TaskCompletionSheet: View {
                 )
             }
             try await taskVM.updateNoteAndPhoto(
-                task: task,
+                task: currentTask,
                 actorId: staffId,
                 note: note.trimmingCharacters(in: .whitespaces),
                 photoUrl: newPhotoUrl

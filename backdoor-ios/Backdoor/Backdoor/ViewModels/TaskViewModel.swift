@@ -135,8 +135,13 @@ final class TaskViewModel {
     /// wire as explicit `null` — Swift's default Encodable omits nil
     /// Optional keys, which Postgres would interpret as "leave column
     /// alone" and quietly fail to unassign.
-    func reassign(task: DailyTask, to newAssignee: UUID?, actorId: UUID) async throws {
-        guard task.assignedTo != newAssignee else { return }
+    ///
+    /// The caller passes the full `Staff` (not just the id) so we can
+    /// populate the in-memory joined `assignee` alongside `assignedTo`
+    /// for an immediate, correctly-labelled optimistic update.
+    func reassign(task: DailyTask, to newStaff: Staff?, actorId: UUID) async throws {
+        let newId = newStaff?.id
+        guard task.assignedTo != newId else { return }
 
         struct Patch: Encodable {
             let assignedTo: UUID?
@@ -148,14 +153,17 @@ final class TaskViewModel {
         }
 
         // Optimistic local update so the UI reflects the change before
-        // the round-trip finishes.
+        // the round-trip finishes. Both fields get updated so the row's
+        // display (which reads `assignee` for the joined name/avatar)
+        // matches `assignedTo` immediately.
         if let idx = tasks.firstIndex(where: { $0.id == task.id }) {
-            tasks[idx].assignedTo = newAssignee
+            tasks[idx].assignedTo = newId
+            tasks[idx].assignee = newStaff
         }
 
         try await supabase
             .from("daily_tasks")
-            .update(Patch(assignedTo: newAssignee))
+            .update(Patch(assignedTo: newId))
             .eq("id", value: task.id)
             .execute()
 
@@ -164,7 +172,7 @@ final class TaskViewModel {
             actorId: actorId,
             eventType: TaskEventType.reassigned.rawValue,
             fromValue: task.assignedTo?.uuidString,
-            toValue: newAssignee?.uuidString
+            toValue: newId?.uuidString
         )
         _ = try? await supabase.from("task_events").insert(event).execute()
     }
