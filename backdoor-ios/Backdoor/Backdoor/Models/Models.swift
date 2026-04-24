@@ -215,6 +215,26 @@ struct NewTaskEvent: Encodable {
     var photoUrl: String?
 }
 
+// MARK: - Task comments
+
+struct TaskComment: Codable, Identifiable {
+    let id: UUID
+    let dailyTaskId: UUID
+    let authorId: UUID?
+    var body: String
+    let createdAt: Date
+    var editedAt: Date?
+
+    // Joined on read.
+    var author: Staff?
+}
+
+struct NewTaskComment: Encodable {
+    var dailyTaskId: UUID
+    var authorId: UUID
+    var body: String
+}
+
 // MARK: - Time helpers
 
 enum TimeOfDay {

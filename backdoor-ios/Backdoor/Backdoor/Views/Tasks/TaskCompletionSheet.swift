@@ -22,6 +22,12 @@ struct TaskCompletionSheet: View {
     // Reassign — fetched on-demand, admin-only.
     @State private var reassignableStaff: [Staff] = []
 
+    // Comments
+    @State private var comments: [TaskComment] = []
+    @State private var commentDraft: String = ""
+    @State private var isPostingComment = false
+    @State private var commentsRealtimeTask: Task<Void, Never>?
+
     private var isDone: Bool { task.status == .completed }
     private var canUndo: Bool {
         isDone && (auth.isAdmin || task.completedBy == auth.staff?.id)
@@ -226,6 +232,10 @@ struct TaskCompletionSheet: View {
 
                     // History (audit log)
                     historySection
+
+                    // Comments — free-text thread per daily_task
+                    Divider().background(Color.bdBorder)
+                    commentsSection
                 }
                 .padding(20)
                 .padding(.bottom, 8)
@@ -235,6 +245,12 @@ struct TaskCompletionSheet: View {
             note = task.note ?? ""
             Task { await loadHistory() }
             Task { await loadReassignableStaffIfNeeded() }
+            Task { await loadComments() }
+            subscribeToComments()
+        }
+        .onDisappear {
+            commentsRealtimeTask?.cancel()
+            commentsRealtimeTask = nil
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
@@ -280,6 +296,158 @@ struct TaskCompletionSheet: View {
         guard let actor = auth.staff?.id else { return }
         do {
             try await taskVM.reassign(task: task, to: newAssignee, actorId: actor)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    // MARK: - Comments
+
+    @ViewBuilder
+    private var commentsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Text(tr("comments"))
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.gray)
+                    .tracking(1.2)
+                Spacer()
+                if !comments.isEmpty {
+                    Text("\(comments.count)")
+                        .font(.caption2)
+                        .foregroundColor(.gray)
+                }
+            }
+
+            if comments.isEmpty {
+                Text(tr("no_comments_yet"))
+                    .font(.caption)
+                    .foregroundColor(.gray)
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(comments) { commentRow($0) }
+                }
+            }
+
+            // Composer pinned at the bottom.
+            HStack(alignment: .bottom, spacing: 8) {
+                TextField(tr("add_comment"), text: $commentDraft, axis: .vertical)
+                    .lineLimit(1...4)
+                    .inputStyle()
+                Button {
+                    Task { await postDraft() }
+                } label: {
+                    if isPostingComment {
+                        ProgressView().tint(.bdAccent)
+                    } else {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.title3)
+                            .foregroundColor(canPost ? .bdAccent : .gray.opacity(0.4))
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(!canPost)
+            }
+        }
+    }
+
+    private var canPost: Bool {
+        !commentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !isPostingComment
+    }
+
+    @ViewBuilder
+    private func commentRow(_ c: TaskComment) -> some View {
+        let isOwn = c.authorId != nil && c.authorId == auth.staff?.id
+        HStack(alignment: .top, spacing: 10) {
+            AvatarView(initials: c.author?.initials ?? "?", url: c.author?.avatarUrl, size: 28)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(c.author?.name ?? "—")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.white)
+                    Text(formattedTime(c.createdAt))
+                        .font(.caption2)
+                        .foregroundColor(.gray)
+                    if c.editedAt != nil {
+                        Text(tr("edited"))
+                            .font(.caption2)
+                            .foregroundColor(.gray)
+                    }
+                    Spacer()
+                    if isOwn || auth.isAdmin {
+                        Menu {
+                            Button(role: .destructive) {
+                                Task { await deleteComment(c) }
+                            } label: {
+                                Label(tr("delete"), systemImage: "trash")
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis")
+                                .font(.caption)
+                                .foregroundColor(.gray)
+                                .padding(.horizontal, 4)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                Text(c.body)
+                    .font(.subheadline)
+                    .foregroundColor(.white)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(10)
+        .background(Color.bgElevated.opacity(0.5))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func loadComments() async {
+        comments = await taskVM.fetchComments(for: task.id)
+    }
+
+    private func subscribeToComments() {
+        commentsRealtimeTask?.cancel()
+        commentsRealtimeTask = Task {
+            let channel = supabase.channel("task_comments_\(task.id)")
+            let changes = channel.postgresChange(
+                AnyAction.self,
+                schema: "public",
+                table: "task_comments",
+                filter: "daily_task_id=eq.\(task.id)"
+            )
+            await channel.subscribe()
+            for await _ in changes {
+                guard !Task.isCancelled else { break }
+                await loadComments()
+            }
+        }
+    }
+
+    private func postDraft() async {
+        guard let authorId = auth.staff?.id else { return }
+        let body = commentDraft
+        isPostingComment = true
+        do {
+            let created = try await taskVM.postComment(
+                dailyTaskId: task.id, authorId: authorId, body: body
+            )
+            // Optimistic append so the UI feels instant — realtime
+            // might deliver the same row a moment later; dedupe by id.
+            if !comments.contains(where: { $0.id == created.id }) {
+                comments.append(created)
+            }
+            commentDraft = ""
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        isPostingComment = false
+    }
+
+    private func deleteComment(_ c: TaskComment) async {
+        do {
+            try await taskVM.deleteComment(id: c.id)
+            comments.removeAll { $0.id == c.id }
         } catch {
             errorMessage = error.localizedDescription
         }

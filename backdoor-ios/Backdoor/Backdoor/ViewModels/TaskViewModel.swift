@@ -348,6 +348,57 @@ final class TaskViewModel {
         return result
     }
 
+    // MARK: - Comments
+
+    /// Fetch the comment thread for a daily_task, oldest first so the
+    /// UI can render like a chat (newest at bottom).
+    func fetchComments(for dailyTaskId: UUID) async -> [TaskComment] {
+        let result: [TaskComment] = (try? await supabase
+            .from("task_comments")
+            .select("*, author:staff!task_comments_author_id_fkey(*)")
+            .eq("daily_task_id", value: dailyTaskId)
+            .order("created_at", ascending: true)
+            .execute()
+            .value) ?? []
+        return result
+    }
+
+    /// Post a new comment. Returns the row as the DB saw it so the
+    /// caller can append it immediately (realtime will also deliver it,
+    /// but we dedupe by id).
+    @discardableResult
+    func postComment(dailyTaskId: UUID, authorId: UUID, body: String) async throws -> TaskComment {
+        let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw NSError(
+                domain: "Backdoor.TaskViewModel",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Comment body is empty"]
+            )
+        }
+        let new = NewTaskComment(
+            dailyTaskId: dailyTaskId,
+            authorId: authorId,
+            body: trimmed
+        )
+        let inserted: TaskComment = try await supabase
+            .from("task_comments")
+            .insert(new)
+            .select("*, author:staff!task_comments_author_id_fkey(*)")
+            .single()
+            .execute()
+            .value
+        return inserted
+    }
+
+    func deleteComment(id: UUID) async throws {
+        try await supabase
+            .from("task_comments")
+            .delete()
+            .eq("id", value: id)
+            .execute()
+    }
+
     deinit {
         realtimeTask?.cancel()
     }

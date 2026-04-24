@@ -120,6 +120,42 @@ create index if not exists task_events_daily_task_idx on task_events(daily_task_
 -- Idempotent guard for DBs created before daily_task_id was made nullable.
 alter table task_events alter column daily_task_id drop not null;
 
+-- ---------- Task comments -----------------------------------------------
+-- Per-daily_task thread. Each staff member can post; realtime updates
+-- propagate to anyone viewing the sheet. Author can edit or delete
+-- their own; admin can edit/delete any. No deletion cascade from staff
+-- so author_id is nullable (ON DELETE SET NULL).
+create table if not exists task_comments (
+  id uuid primary key default gen_random_uuid(),
+  daily_task_id uuid not null references daily_tasks(id) on delete cascade,
+  author_id uuid references staff(id) on delete set null,
+  body text not null check (length(trim(body)) > 0),
+  created_at timestamptz not null default now(),
+  edited_at timestamptz
+);
+
+create index if not exists task_comments_daily_task_idx
+  on task_comments(daily_task_id, created_at);
+
+-- Auto-touch edited_at when the body changes (not for every update —
+-- we don't want to mark "edited" if only e.g. created_at was touched
+-- by some migration). Updates that don't change body leave edited_at
+-- untouched.
+create or replace function task_comments_touch_edited_at()
+returns trigger language plpgsql as $$
+begin
+  if new.body is distinct from old.body then
+    new.edited_at = now();
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists task_comments_edited_at on task_comments;
+create trigger task_comments_edited_at
+  before update on task_comments
+  for each row execute function task_comments_touch_edited_at();
+
 -- Idempotent guard for DBs created with the original category CHECK.
 alter table tasks drop constraint if exists tasks_category_check;
 
@@ -348,6 +384,7 @@ alter table venue_settings enable row level security;
 alter table venue_schedule enable row level security;
 alter table task_events enable row level security;
 alter table categories enable row level security;
+alter table task_comments enable row level security;
 
 -- staff: everyone authenticated can read; admin can write anything;
 -- anyone can update their own row, but NOT change their role or is_active
@@ -456,6 +493,33 @@ drop policy if exists task_events_admin_delete on task_events;
 create policy task_events_admin_delete on task_events
   for delete using (is_admin());
 
+-- task_comments: read for any authenticated, insert as self (or null
+-- for system posts), update/delete only by author or admin.
+drop policy if exists task_comments_read on task_comments;
+create policy task_comments_read on task_comments
+  for select using (auth.role() = 'authenticated');
+
+drop policy if exists task_comments_insert on task_comments;
+create policy task_comments_insert on task_comments
+  for insert with check (
+    author_id is null
+    or author_id = (select id from staff where auth_user_id = auth.uid())
+  );
+
+drop policy if exists task_comments_update on task_comments;
+create policy task_comments_update on task_comments
+  for update using (
+    is_admin()
+    or author_id = (select id from staff where auth_user_id = auth.uid())
+  );
+
+drop policy if exists task_comments_delete on task_comments;
+create policy task_comments_delete on task_comments
+  for delete using (
+    is_admin()
+    or author_id = (select id from staff where auth_user_id = auth.uid())
+  );
+
 -- ---------- Realtime -----------------------------------------------------
 -- Guarded publication adds — safe to re-run. Every table that a client
 -- subscribes to via Supabase Realtime goes here.
@@ -474,6 +538,9 @@ begin
     exception when duplicate_object then null;
   end;
   begin alter publication supabase_realtime add table categories;
+    exception when duplicate_object then null;
+  end;
+  begin alter publication supabase_realtime add table task_comments;
     exception when duplicate_object then null;
   end;
   begin alter publication supabase_realtime add table venue_settings;
