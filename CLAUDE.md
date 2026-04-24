@@ -79,26 +79,24 @@ management PAT (SQL-level).
 
 ## Schema status
 
-**As of 2026-04-23, `supabase/schema.sql` mirrors the live DB and has been applied.** All previously drifted surfaces are reconciled:
+**As of 2026-04-24, `supabase/schema.sql` mirrors the live DB and has been applied.** All previously drifted surfaces are reconciled:
 
-- `tasks.start_time`, `tasks.end_time`
+- `tasks.start_time`, `tasks.end_time`; category is free-form `text` (no CHECK constraint).
 - `daily_tasks.start_time`, `.end_time`, `.started_by`, `.started_at`
-- `task_events` table + RLS + Realtime + `CHECK` constraint matching `TaskEventType` in Models.swift
+- `task_events` table + RLS + Realtime + `CHECK` constraint matching `TaskEventType` in Models.swift. `daily_task_id` is nullable for template-level events (deleted, restored).
 - `venue_settings` / `venue_schedule` + `updated_at` triggers + RLS + Realtime
-- `generate_daily_tasks` skips closed days and copies `start_time`/`end_time` from the template (verified behaviorally — calling it for a Tue/Wed returns 0 on the live DB)
+- `categories` table (key pk, label_en, label_ja, sort_order, is_builtin) + RLS + Realtime — admin-editable via Admin → Categories.
+- `task_comments` table (daily_task_id, author_id, body, created_at, edited_at) + RLS + Realtime + body-diff edited_at trigger.
+- `profile_stats(target uuid default null)` RPC returning jsonb — powers Profile + peer StaffProfileView.
+- `generate_daily_tasks` skips closed days and copies `start_time`/`end_time` from the template (verified behaviorally).
 
-Adds use `alter table … add column if not exists` so the schema is safe to re-run against the existing project.
+Adds use `alter table … add column if not exists` / guarded DO blocks so the schema is safe to re-run against the existing project.
 
-Seed data in `schema.sql` matches real operation: Mon/Thu/Fri/Sat/Sun open 17:00–00:00; Tue+Wed closed; `prep_buffer_minutes` default 510.
+Seed data in `schema.sql` matches real operation: Mon/Thu/Fri/Sat/Sun open 17:00–00:00; Tue+Wed closed; `prep_buffer_minutes` default 510. Categories seeded with the six built-ins (opening, bar, cleaning, closing, weekly, other).
 
 ### What I could not verify through REST
 
-The PostgREST surface doesn't expose function bodies, trigger definitions, or existing `CHECK` constraint SQL. For the live project I know *behaviorally* that:
-
-- `generate_daily_tasks` currently does skip closed days (test: calling it for a closed Tuesday returned 0 with 0 rows inserted; calling for an open Thursday returned 2 with start/end times populated).
-- `task_events` allows the iOS client to insert the 8 enum values listed in `TaskEventType` (at least `completed`, `undone`, `reassigned` confirmed in live data).
-
-If you need the exact live SQL (e.g. before a destructive `create or replace`), ask the operator to paste from `\sf generate_daily_tasks` in the Supabase SQL editor.
+The PostgREST surface doesn't expose function bodies, trigger definitions, or existing `CHECK` constraint SQL. If you need the exact live SQL, ask the operator to paste from `\sf generate_daily_tasks` (or the equivalent) in the Supabase SQL editor, or hit the Management API's `database/query` endpoint with `pg_get_functiondef(…)`.
 
 ## Hours admin state (in progress)
 
@@ -139,8 +137,44 @@ gone.
 - Main branch: `main`.
 - Commit message style: short present-tense subject, longer body explaining the *why*. See recent commits for examples.
 
+## iOS app surfaces (as of 2026-04-24)
+
+Bottom tabs (varies by role):
+- **Today** — task board for a business day. Rich header: prev/next date chevrons, tappable date → graphical DatePicker, venue status pill (Open / Prep / Closed / Between shifts), Everyone/Mine pills, "Today" shortcut when off-day. Swipe left/right shifts the date. People-search magnifying glass at top-right opens `PeopleSheet`.
+- **Admin** (admin only) — horizontally-scrolled tabs: Overview · Tasks · Categories · Staff · Hours · History.
+- **Profile** — identity card, role-specific insight (admin: active staff count / templates created / reassignments; staff: next pending task today), 2×2 stats grid, recent activity, language picker, sign out.
+
+Key reusables in `backdoor-ios/Backdoor/Backdoor/Views/Components/`:
+- `AvatarView`, `StatusDot`, `SearchField`, `Styles.swift` (colors + cardStyle/inputStyle/PrimaryButtonStyle/SecondaryButtonStyle).
+- `SearchablePickerSheet<RowID>` — generic sheet with a search field + row list. `PickerRow<RowID>` carries label, optional sublabel, optional avatar, and `isSpecial` (for pseudo-rows like "All" / "Anyone" that bypass filtering). Used wherever we had long Menu dropdowns (reassign, assignee/category filters, actor filter, assign-to in task editor).
+
+Admin edit-mode pattern is in place on Tasks, Categories, Staff — `List(selection:)` with per-row `.buttonStyle(.borderless)`, top-right Edit/Done toggle, bottom bulk-action bar. Categories also support drag-to-reorder via `.onMove` persisted to `sort_order`.
+
+## Gotchas hit this session
+
+- **Dict-literal duplicate keys trap at runtime.** `Localization.swift` uses `[String: String]` literals; duplicate keys crash with `Fatal error: Dictionary literal contains duplicate keys.` the first time `tr(...)` runs — often "app won't load" in practice. Before adding new keys, grep both `enStrings` and `jaStrings` for the proposed key. A full scan (it's a 500+ line file): `python3 -c "import re; b=open('backdoor-ios/.../Localization.swift').read(); …"` — pattern is in the commit `5cbc27b`.
+- **`List` row with multiple Buttons collapses into one tap target.** Default Button style in a List row makes every button inside fire the row's action (or nothing). Fix: `.buttonStyle(.borderless)` on each inner Button. See commit `7a085d3` — was the "assigning tasks to users won't respond" bug.
+- **Optional UUID in PostgREST `update` doesn't clear the column.** Swift's default `JSONEncoder` *omits* nil Optionals — Postgres reads that as "no change." To actually unassign (set null), use a custom Encodable that calls `container.encode(_:forKey:)` (not `encodeIfPresent`). See `TaskViewModel.reassign` in commit `f4d4930`.
+- **Cloudflare blocks Python's default User-Agent on `api.supabase.com`.** Management API calls must go through `curl`, not `urllib.request`, unless you set a custom UA. Recipe above.
+- **Supabase Swift + SwiftUI `.refreshable` cancellation.** SwiftUI cancels the `.refreshable` Task when the view re-renders mid-fetch (Observable mutations trigger re-render). `CancellationError` then lands in the catch-all and clobbers state. Treat it as benign — return silently and keep existing data.
+
+## Next task (pending)
+
+Admin → top-nav refactor:
+- **Remove** `History` and `Hours` from the horizontally-scrolled Admin tab row.
+- **Move** them to the top-left of the Admin view as small icon buttons (gearshape-ish for Hours, clock-arrow-circlepath-ish for History) that each open their existing view as a sheet (or navigation).
+- Bottom Admin tabs should then be: Overview · Tasks · Categories · Staff — a cleaner, non-scrolling set.
+- Goal: fewer nested horizontal tabs, top-right gets discoverable "secondary admin actions" icons.
+
+Files to touch:
+- `backdoor-ios/Backdoor/Backdoor/Views/Admin/AdminView.swift` — drop `.history` and `.hours` from `AdminTab`, render the corresponding views only via sheet presentations triggered from new top-bar icon buttons.
+- Keep `HoursAdminView` and `HistoryAdminView` as-is — they'll just be presented modally now.
+- Might need to add a `Close` button to each for the sheet dismiss (they were tab contents before).
+
 ## Don'ts
 
 - Don't commit `.env`, `node_modules/`, `dist/`, `xcuserdata/`, or anything under `backdoor-ios/Backdoor/Backdoor.xcodeproj/xcuserdata/`.
 - Don't create documentation files (`*.md`) unless the user asks — this file is an exception because the user explicitly asked for a memory note.
 - Don't push destructive git operations without explicit confirmation.
+- Don't add a new Localization key without grepping both `enStrings` and `jaStrings` first (see Gotchas).
+- Don't put multiple Buttons in a `List` row without `.buttonStyle(.borderless)` (see Gotchas).
