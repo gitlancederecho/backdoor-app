@@ -51,10 +51,13 @@ struct TaskCardView: View {
 
                 HStack(spacing: 6) {
                     if let assignee = task.assignee {
-                        AvatarView(initials: assignee.initials, url: assignee.avatarUrl, size: 18)
-                        Text(assignee.name)
-                            .font(.caption)
-                            .foregroundColor(.gray)
+                        HStack(spacing: 6) {
+                            AvatarView(initials: assignee.initials, url: assignee.avatarUrl, size: 18)
+                            Text(assignee.name)
+                                .font(.caption)
+                                .foregroundColor(.gray)
+                        }
+                        .staffProfileLink(assignee)
                         Text("·").foregroundColor(Color.gray.opacity(0.5)).font(.caption)
                     }
                     Text(statusLabel)

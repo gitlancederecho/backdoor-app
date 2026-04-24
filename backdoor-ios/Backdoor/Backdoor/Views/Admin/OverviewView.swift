@@ -70,6 +70,7 @@ struct OverviewView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 14))
                         .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.bdBorder))
                         .padding(.horizontal, 16)
+                        .staffProfileLink(row.staff)
                     }
                 }
 

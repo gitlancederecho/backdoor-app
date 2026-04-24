@@ -276,77 +276,83 @@ struct HistoryAdminView: View {
 
     @ViewBuilder
     private func eventRow(_ e: TaskEvent) -> some View {
+        // Split the row into two hit regions: the avatar (actor profile
+        // link) and the rest (opens the task sheet). Keeps the profile
+        // link tappable without making every tap route to the task.
         let canOpen = e.dailyTask != nil
-        Button {
-            if let dt = e.dailyTask { selectedTask = dt }
-        } label: {
-            HStack(alignment: .top, spacing: 10) {
-                AvatarView(initials: e.actor?.initials ?? "?", url: e.actor?.avatarUrl, size: 32)
+        HStack(alignment: .top, spacing: 10) {
+            AvatarView(initials: e.actor?.initials ?? "?", url: e.actor?.avatarUrl, size: 32)
+                .staffProfileLink(e.actor)
 
-                VStack(alignment: .leading, spacing: 4) {
-                    // Title line: actor, verb, task title
-                    HStack(spacing: 6) {
-                        Text(e.actor?.name ?? "—")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundColor(.white)
-                        verbBadge(e)
+            Button {
+                if let dt = e.dailyTask { selectedTask = dt }
+            } label: {
+                HStack(alignment: .top, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        // Title line: actor, verb, task title
+                        HStack(spacing: 6) {
+                            Text(e.actor?.name ?? "—")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundColor(.white)
+                            verbBadge(e)
+                        }
+
+                        // Title preference:
+                        //   1. joined daily_task → task.title (normal events)
+                        //   2. event.note (template-level events like deleted
+                        //      carry the template title here since there's no
+                        //      daily_task_id to join through).
+                        if let taskTitle = e.dailyTask?.task?.title ?? e.note, !taskTitle.isEmpty {
+                            Text(taskTitle)
+                                .font(.subheadline)
+                                .foregroundColor(.white.opacity(0.9))
+                                .lineLimit(2)
+                                .multilineTextAlignment(.leading)
+                        }
+
+                        // from → to for reassignments
+                        if e.eventType == .reassigned,
+                           let toId = e.toValue, let toUUID = UUID(uuidString: toId) {
+                            let toName = adminVM.allStaff.first(where: { $0.id == toUUID })?.name ?? "—"
+                            Text("→ \(toName)")
+                                .font(.caption)
+                                .foregroundColor(.gray)
+                        }
+
+                        // Optional note preview. Skipped when the note was
+                        // already used as the title fallback above, otherwise
+                        // we'd render the same string twice.
+                        if let note = e.note,
+                           !note.isEmpty,
+                           e.dailyTask?.task?.title != nil {
+                            Text(note)
+                                .font(.caption)
+                                .foregroundColor(.gray)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.leading)
+                        }
                     }
 
-                    // Title preference:
-                    //   1. joined daily_task → task.title (normal events)
-                    //   2. event.note (template-level events like deleted
-                    //      carry the template title here since there's no
-                    //      daily_task_id to join through).
-                    if let taskTitle = e.dailyTask?.task?.title ?? e.note, !taskTitle.isEmpty {
-                        Text(taskTitle)
-                            .font(.subheadline)
-                            .foregroundColor(.white.opacity(0.9))
-                            .lineLimit(2)
-                            .multilineTextAlignment(.leading)
-                    }
+                    Spacer()
 
-                    // from → to for reassignments
-                    if e.eventType == .reassigned,
-                       let toId = e.toValue, let toUUID = UUID(uuidString: toId) {
-                        let toName = adminVM.allStaff.first(where: { $0.id == toUUID })?.name ?? "—"
-                        Text("→ \(toName)")
-                            .font(.caption)
+                    VStack(alignment: .trailing, spacing: 4) {
+                        Text(timeString(e.createdAt))
+                            .font(.caption2.monospacedDigit())
                             .foregroundColor(.gray)
-                    }
-
-                    // Optional note preview. Skipped when the note was
-                    // already used as the title fallback above, otherwise
-                    // we'd render the same string twice.
-                    if let note = e.note,
-                       !note.isEmpty,
-                       e.dailyTask?.task?.title != nil {
-                        Text(note)
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                            .lineLimit(2)
-                            .multilineTextAlignment(.leading)
+                        if canOpen {
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(.gray.opacity(0.5))
+                        }
                     }
                 }
-
-                Spacer()
-
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text(timeString(e.createdAt))
-                        .font(.caption2.monospacedDigit())
-                        .foregroundColor(.gray)
-                    if canOpen {
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(.gray.opacity(0.5))
-                    }
-                }
+                .contentShape(Rectangle())
             }
-            .padding(12)
-            .cardStyle()
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .disabled(!canOpen)
         }
-        .buttonStyle(.plain)
-        .disabled(!canOpen)
+        .padding(12)
+        .cardStyle()
     }
 
     private func verbBadge(_ e: TaskEvent) -> some View {

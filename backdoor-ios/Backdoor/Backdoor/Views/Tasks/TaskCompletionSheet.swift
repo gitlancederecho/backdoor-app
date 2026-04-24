@@ -82,8 +82,11 @@ struct TaskCompletionSheet: View {
                     HStack(spacing: 6) {
                         Text("\(tr("assign_to")):").foregroundColor(.gray)
                         if let a = displayAssignee {
-                            AvatarView(initials: a.initials, url: a.avatarUrl, size: 20)
-                            Text(a.name).foregroundColor(.white)
+                            HStack(spacing: 6) {
+                                AvatarView(initials: a.initials, url: a.avatarUrl, size: 20)
+                                Text(a.name).foregroundColor(.white)
+                            }
+                            .staffProfileLink(a)
                         } else {
                             Text(tr("assign_anyone")).foregroundColor(.gray)
                         }
@@ -409,11 +412,13 @@ struct TaskCompletionSheet: View {
         let isOwn = c.authorId != nil && c.authorId == auth.staff?.id
         HStack(alignment: .top, spacing: 10) {
             AvatarView(initials: c.author?.initials ?? "?", url: c.author?.avatarUrl, size: 28)
+                .staffProfileLink(c.author)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(c.author?.name ?? "—")
                         .font(.caption.weight(.semibold))
                         .foregroundColor(.white)
+                        .staffProfileLink(c.author)
                     Text(formattedTime(c.createdAt))
                         .font(.caption2)
                         .foregroundColor(.gray)
@@ -706,6 +711,7 @@ struct TaskCompletionSheet: View {
                         Text("· \(actor)")
                             .font(.caption)
                             .foregroundColor(.gray)
+                            .staffProfileLink(event.actor)
                     }
                     Spacer()
                     Text(formattedTime(event.createdAt))
