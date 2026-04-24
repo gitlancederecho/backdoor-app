@@ -40,6 +40,9 @@ struct TaskCompletionSheet: View {
                         .font(.title3.bold())
                         .foregroundColor(.white)
 
+                    // Pills — category / priority (only if not normal) / status
+                    pillsRow
+
                     // Meta — assignment
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(spacing: 6) {
@@ -52,6 +55,14 @@ struct TaskCompletionSheet: View {
                             }
                         }
                         .font(.subheadline)
+                    }
+
+                    // Expected time window, if the template specified one
+                    if let windowText = expectedWindowText {
+                        HStack(spacing: 6) {
+                            Image(systemName: "clock").font(.caption).foregroundColor(.gray)
+                            Text(windowText).font(.subheadline).foregroundColor(.gray)
+                        }
                     }
 
                     // Trail — started / completed with duration
@@ -87,13 +98,14 @@ struct TaskCompletionSheet: View {
 
                     Divider().background(Color.bdBorder)
 
-                    // Note
+                    // Note — editable before AND after completion so
+                    // someone can correct or append context post-hoc
+                    // (logs note_added / note_updated events).
                     VStack(alignment: .leading, spacing: 6) {
                         Text(tr("add_note")).font(.caption).foregroundColor(.gray)
                         TextField(tr("add_note"), text: $note, axis: .vertical)
                             .lineLimit(3...5)
                             .inputStyle()
-                            .disabled(isDone)
                     }
 
                     // Photo
@@ -124,12 +136,23 @@ struct TaskCompletionSheet: View {
                                 }
                             }
                         } else if let existingUrl = task.photoUrl, let url = URL(string: existingUrl) {
-                            AsyncImage(url: url) { img in
-                                img.resizable().scaledToFill()
-                            } placeholder: { Color.bgElevated }
-                                .frame(maxWidth: .infinity).frame(height: 200)
-                                .clipShape(RoundedRectangle(cornerRadius: 12))
-                        } else if !isDone {
+                            ZStack(alignment: .topTrailing) {
+                                AsyncImage(url: url) { img in
+                                    img.resizable().scaledToFill()
+                                } placeholder: { Color.bgElevated }
+                                    .frame(maxWidth: .infinity).frame(height: 200)
+                                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                                PhotosPicker(selection: $selectedPhoto, matching: .images) {
+                                    Label(tr("replace_photo"), systemImage: "arrow.triangle.2.circlepath")
+                                        .font(.caption.bold())
+                                        .foregroundColor(.white)
+                                        .padding(.horizontal, 10).padding(.vertical, 5)
+                                        .background(.black.opacity(0.6))
+                                        .clipShape(Capsule())
+                                }
+                                .padding(8)
+                            }
+                        } else {
                             PhotosPicker(selection: $selectedPhoto, matching: .images) {
                                 Label(tr("choose_photo"), systemImage: "camera")
                                     .font(.subheadline)
@@ -161,6 +184,16 @@ struct TaskCompletionSheet: View {
                     // Actions
                     HStack(spacing: 12) {
                         if isDone {
+                            if hasPostCompletionEdits {
+                                Button {
+                                    Task { await savePostCompletionEdits() }
+                                } label: {
+                                    if isSaving { ProgressView().tint(.black) }
+                                    else { Text(tr("save")) }
+                                }
+                                .buttonStyle(PrimaryButtonStyle())
+                                .disabled(isSaving)
+                            }
                             if canUndo {
                                 Button(tr("undo")) {
                                     Task { await undoTask() }
@@ -197,6 +230,113 @@ struct TaskCompletionSheet: View {
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         .preferredColorScheme(.dark)
+    }
+
+    // MARK: - Pills + time window
+
+    @ViewBuilder
+    private var pillsRow: some View {
+        HStack(spacing: 6) {
+            if let key = task.task?.category {
+                pill(
+                    text: CategoryDisplay.localized(key),
+                    fg: .gray,
+                    bg: Color.bgElevated
+                )
+            }
+            if let prio = task.task?.priority, prio == .high {
+                pill(
+                    text: tr("priority_high"),
+                    fg: .statusPending,
+                    bg: Color.statusPending.opacity(0.15)
+                )
+            }
+            pill(
+                text: statusLabel,
+                fg: statusColor,
+                bg: statusColor.opacity(0.15)
+            )
+        }
+    }
+
+    private func pill(text: String, fg: Color, bg: Color) -> some View {
+        Text(text)
+            .font(.caption2.weight(.semibold))
+            .foregroundColor(fg)
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .background(bg)
+            .clipShape(Capsule())
+    }
+
+    private var statusLabel: String {
+        switch task.status {
+        case .pending:     return tr("status_pending")
+        case .in_progress: return tr("status_in_progress")
+        case .completed:   return tr("status_completed")
+        }
+    }
+
+    private var statusColor: Color {
+        switch task.status {
+        case .pending:     return .gray
+        case .in_progress: return .statusProgress
+        case .completed:   return .statusDone
+        }
+    }
+
+    /// "Expected 17:00 – 17:30" etc. Nil when the template didn't
+    /// specify either bound.
+    private var expectedWindowText: String? {
+        switch (task.startTime, task.endTime) {
+        case let (.some(s), .some(e)):
+            return String(format: tr("expected_window"),
+                          TimeOfDay.displayString(from: s),
+                          TimeOfDay.displayString(from: e))
+        case let (.some(s), nil):
+            return String(format: tr("expected_from"),
+                          TimeOfDay.displayString(from: s))
+        case let (nil, .some(e)):
+            return String(format: tr("expected_by"),
+                          TimeOfDay.displayString(from: e))
+        default:
+            return nil
+        }
+    }
+
+    // MARK: - Post-completion edits
+
+    private var hasPostCompletionEdits: Bool {
+        guard isDone else { return false }
+        let trimmed = note.trimmingCharacters(in: .whitespaces)
+        let existingNote = task.note ?? ""
+        let noteChanged = trimmed != existingNote
+        let photoChanged = photoData != nil
+        return noteChanged || photoChanged
+    }
+
+    private func savePostCompletionEdits() async {
+        guard let staffId = auth.staff?.id else { return }
+        isSaving = true
+        errorMessage = nil
+        do {
+            var newPhotoUrl: String? = task.photoUrl
+            if let data = photoData {
+                let mime = data.first == 0x89 ? "image/png" : "image/jpeg"
+                newPhotoUrl = try await uploadTaskPhoto(
+                    taskId: task.id, date: task.date, imageData: data, mimeType: mime
+                )
+            }
+            try await taskVM.updateNoteAndPhoto(
+                task: task,
+                actorId: staffId,
+                note: note.trimmingCharacters(in: .whitespaces),
+                photoUrl: newPhotoUrl
+            )
+            isPresented = false
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        isSaving = false
     }
 
     // MARK: - Trail helpers

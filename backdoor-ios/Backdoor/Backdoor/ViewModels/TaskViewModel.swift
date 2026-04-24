@@ -126,6 +126,36 @@ final class TaskViewModel {
         await logEvent(dailyTaskId: task.id, actorId: staffId, type: .started)
     }
 
+    /// Patch just the note and/or photo on a daily_task — used when an
+    /// admin/staff edits these fields on an already-completed row.
+    /// Logs either `note_added` (empty → non-empty), `note_updated`
+    /// (non-empty → different non-empty), or `photo_added` when the
+    /// photo URL changes. Multiple events may fire if both change.
+    func updateNoteAndPhoto(
+        task: DailyTask,
+        actorId: UUID,
+        note newNote: String?,
+        photoUrl newPhoto: String?
+    ) async throws {
+        let cleanNew = (newNote?.isEmpty == true) ? nil : newNote
+        let old = task.note?.isEmpty == true ? nil : task.note
+        let noteChanged = cleanNew != old
+        let photoChanged = newPhoto != task.photoUrl
+
+        guard noteChanged || photoChanged else { return }
+
+        let patch = DailyTaskPatch(note: cleanNew, photoUrl: newPhoto)
+        try await applyPatch(id: task.id, patch: patch)
+
+        if noteChanged {
+            let type: TaskEventType = (old == nil) ? .note_added : .note_updated
+            await logEvent(dailyTaskId: task.id, actorId: actorId, type: type, note: cleanNew)
+        }
+        if photoChanged, let url = newPhoto {
+            await logEvent(dailyTaskId: task.id, actorId: actorId, type: .photo_added, photoUrl: url)
+        }
+    }
+
     func undo(task: DailyTask) async throws {
         let patch = DailyTaskPatch(status: .in_progress, completedBy: nil, completedAt: nil)
         try await applyPatch(id: task.id, patch: patch)
