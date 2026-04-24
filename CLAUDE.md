@@ -141,7 +141,7 @@ gone.
 
 Bottom tabs (varies by role):
 - **Today** — task board for a business day. Rich header: prev/next date chevrons, tappable date → graphical DatePicker, venue status pill (Open / Prep / Closed / Between shifts), Everyone/Mine pills, "Today" shortcut when off-day. Swipe left/right shifts the date. People-search magnifying glass at top-right opens `PeopleSheet`.
-- **Admin** (admin only) — four non-scrolling sub-tabs: Overview · Tasks · Categories · Staff. Two small icon buttons at the top-left of the header open **Hours** (`clock.fill`) and **History** (`clock.arrow.circlepath`) as sheets — each wrapped in a `NavigationStack` with a `Close` toolbar button (cancellationAction).
+- **Admin** (admin only) — three non-scrolling sub-tabs: Overview · Tasks · Categories. Three icon buttons at the top-right of the header open **Staff** (`person.2.fill`), **Hours** (`clock.fill`), and **History** (`clock.arrow.circlepath`) as sheets — each wrapped in a `NavigationStack` with a `Close` toolbar button (cancellationAction).
 - **Profile** — identity card, role-specific insight (admin: active staff count / templates created / reassignments; staff: next pending task today), 2×2 stats grid, recent activity, language picker, sign out.
 
 Key reusables in `backdoor-ios/Backdoor/Backdoor/Views/Components/`:

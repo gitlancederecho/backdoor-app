@@ -1,14 +1,13 @@
 import SwiftUI
 
 enum AdminTab: String, CaseIterable {
-    case overview, tasks, categories, staff
+    case overview, tasks, categories
 
     var localized: String {
         switch self {
         case .overview:   return tr("admin_overview")
         case .tasks:      return tr("admin_tasks")
         case .categories: return tr("admin_categories")
-        case .staff:      return tr("admin_staff")
         }
     }
 }
@@ -22,6 +21,7 @@ struct AdminView: View {
     @State private var tab: AdminTab = .overview
     @State private var showingHours = false
     @State private var showingHistory = false
+    @State private var showingStaff = false
 
     var body: some View {
         let _ = lang.current
@@ -31,6 +31,22 @@ struct AdminView: View {
                 // Header
                 VStack(alignment: .leading, spacing: 12) {
                     HStack(spacing: 12) {
+                        Text(tr("tab_admin"))
+                            .font(.title2.bold())
+                            .foregroundColor(.white)
+
+                        Spacer()
+
+                        Button { showingStaff = true } label: {
+                            Image(systemName: "person.2.fill")
+                                .font(.system(size: 16, weight: .medium))
+                                .foregroundColor(.white)
+                                .frame(width: 36, height: 36)
+                                .background(Color.bgElevated)
+                                .clipShape(Circle())
+                        }
+                        .accessibilityLabel(tr("admin_open_staff"))
+
                         Button { showingHours = true } label: {
                             Image(systemName: "clock.fill")
                                 .font(.system(size: 16, weight: .medium))
@@ -50,12 +66,6 @@ struct AdminView: View {
                                 .clipShape(Circle())
                         }
                         .accessibilityLabel(tr("admin_open_history"))
-
-                        Spacer()
-
-                        Text(tr("tab_admin"))
-                            .font(.title2.bold())
-                            .foregroundColor(.white)
                     }
 
                     // Segment tabs — four entries, no scroll needed.
@@ -82,7 +92,6 @@ struct AdminView: View {
                 case .overview:   OverviewView(taskVM: taskVM, adminVM: adminVM)
                 case .tasks:      TasksAdminView(adminVM: adminVM)
                 case .categories: CategoriesAdminView(adminVM: adminVM)
-                case .staff:      StaffAdminView(adminVM: adminVM)
                 }
             }
         }
@@ -96,6 +105,12 @@ struct AdminView: View {
         .sheet(isPresented: $showingHistory) {
             HistoryAdminView()
                 .environment(adminVM)
+                .environment(lang)
+        }
+        .sheet(isPresented: $showingStaff) {
+            StaffAdminView(adminVM: adminVM)
+                .environment(adminVM)
+                .environment(auth)
                 .environment(lang)
         }
     }

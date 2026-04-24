@@ -7,6 +7,7 @@ struct StaffAdminView: View {
     @Bindable var adminVM: AdminViewModel
     @Environment(AuthViewModel.self) private var auth
     @Environment(LanguageManager.self) private var lang
+    @Environment(\.dismiss) private var dismiss
     @State private var editingStaff: Staff?
 
     // Filters
@@ -44,16 +45,31 @@ struct StaffAdminView: View {
 
     var body: some View {
         let _ = lang.current
-        VStack(spacing: 0) {
-            filterBar
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-            Divider().background(Color.bdBorder)
-            staffList
-            if editMode.isEditing, !effectiveSelection.isEmpty {
-                bulkActionBar
+        NavigationStack {
+            ZStack {
+                Color.bgPrimary.ignoresSafeArea()
+                VStack(spacing: 0) {
+                    filterBar
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                    Divider().background(Color.bdBorder)
+                    staffList
+                    if editMode.isEditing, !effectiveSelection.isEmpty {
+                        bulkActionBar
+                    }
+                }
+            }
+            .navigationTitle(tr("admin_staff"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Color.bgCard, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(tr("close")) { dismiss() }.foregroundColor(.gray)
+                }
             }
         }
+        .preferredColorScheme(.dark)
         .sheet(item: $editingStaff) { staff in
             EditStaffSheet(staff: staff, adminVM: adminVM)
                 .environment(lang)
