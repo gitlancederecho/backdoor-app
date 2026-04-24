@@ -228,6 +228,25 @@ create trigger venue_schedule_updated_at
   before update on venue_schedule
   for each row execute function set_updated_at();
 
+-- One-off exceptions to the weekly schedule: holidays, special events, or
+-- just "open early today." Any field may be NULL to inherit from
+-- venue_schedule for that weekday. `reason` is a free-form label shown in
+-- the admin UI and (eventually) the venue status pill.
+create table if not exists venue_schedule_override (
+  date date primary key,
+  is_closed boolean,
+  open_time time,
+  close_time time,
+  reason text,
+  updated_at timestamptz not null default now(),
+  created_at timestamptz not null default now()
+);
+
+drop trigger if exists venue_schedule_override_updated_at on venue_schedule_override;
+create trigger venue_schedule_override_updated_at
+  before update on venue_schedule_override
+  for each row execute function set_updated_at();
+
 drop trigger if exists categories_updated_at on categories;
 create trigger categories_updated_at
   before update on categories
@@ -279,13 +298,41 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function handle_new_auth_user();
 
+-- ---------- Effective venue hours resolver -----------------------------
+-- Single source of truth: for any date, returns the weekly default merged
+-- with that date's override (if any). `reason` + `has_override` are
+-- non-null / true only when an override row exists. Callers that ask
+-- "is the venue open on date X?" should use this, not `venue_schedule`
+-- directly.
+create or replace function effective_venue_hours(target_date date)
+returns table (
+  is_closed boolean,
+  open_time time,
+  close_time time,
+  reason text,
+  has_override boolean
+)
+language sql stable
+set search_path = public
+as $$
+  select
+    coalesce(o.is_closed, vs.is_closed)   as is_closed,
+    coalesce(o.open_time, vs.open_time)   as open_time,
+    coalesce(o.close_time, vs.close_time) as close_time,
+    o.reason,
+    (o.date is not null)                  as has_override
+  from venue_schedule vs
+  left join venue_schedule_override o on o.date = target_date
+  where vs.weekday = extract(isodow from target_date)::int;
+$$;
+
 -- ---------- Generate daily_tasks from templates -------------------------
 -- Call this at the start of the day (or on demand) to materialize recurring
 -- task instances for a given date. Safe to re-run (idempotent).
 --
--- Skips generation on days where `venue_schedule.is_closed = true` so the
--- Hours admin hint ("tasks won't generate on closed days") is enforced at
--- the source.
+-- Skips generation on days where the effective schedule is closed — both
+-- the weekly `venue_schedule` and per-date `venue_schedule_override`
+-- participate via `effective_venue_hours`.
 create or replace function generate_daily_tasks(target_date date default current_date)
 returns int
 language plpgsql security definer
@@ -297,12 +344,11 @@ declare
   inserted int := 0;
   day_closed boolean;
 begin
-  -- Honor the weekly schedule: if the venue is closed on this weekday,
-  -- don't materialize instances. Falls back to "not closed" if no schedule
-  -- row exists, preserving the pre-hours behavior.
+  -- Honor the effective schedule (weekly default + any date override).
+  -- Falls back to "not closed" if no schedule row exists, preserving the
+  -- pre-hours behavior.
   select is_closed into day_closed
-  from venue_schedule
-  where weekday = dow;
+  from effective_venue_hours(target_date);
 
   if coalesce(day_closed, false) then
     return 0;
@@ -382,6 +428,7 @@ alter table tasks enable row level security;
 alter table daily_tasks enable row level security;
 alter table venue_settings enable row level security;
 alter table venue_schedule enable row level security;
+alter table venue_schedule_override enable row level security;
 alter table task_events enable row level security;
 alter table categories enable row level security;
 alter table task_comments enable row level security;
@@ -458,6 +505,15 @@ create policy venue_schedule_read on venue_schedule
 
 drop policy if exists venue_schedule_admin_write on venue_schedule;
 create policy venue_schedule_admin_write on venue_schedule
+  for all using (is_admin()) with check (is_admin());
+
+-- venue_schedule_override: same policy shape as venue_schedule.
+drop policy if exists venue_schedule_override_read on venue_schedule_override;
+create policy venue_schedule_override_read on venue_schedule_override
+  for select using (auth.role() = 'authenticated');
+
+drop policy if exists venue_schedule_override_admin_write on venue_schedule_override;
+create policy venue_schedule_override_admin_write on venue_schedule_override
   for all using (is_admin()) with check (is_admin());
 
 -- categories: everyone authenticated reads; only admin can write.
@@ -547,6 +603,9 @@ begin
     exception when duplicate_object then null;
   end;
   begin alter publication supabase_realtime add table venue_schedule;
+    exception when duplicate_object then null;
+  end;
+  begin alter publication supabase_realtime add table venue_schedule_override;
     exception when duplicate_object then null;
   end;
 end $$;

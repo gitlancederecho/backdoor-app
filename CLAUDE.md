@@ -85,6 +85,7 @@ management PAT (SQL-level).
 - `daily_tasks.start_time`, `.end_time`, `.started_by`, `.started_at`
 - `task_events` table + RLS + Realtime + `CHECK` constraint matching `TaskEventType` in Models.swift. `daily_task_id` is nullable for template-level events (deleted, restored).
 - `venue_settings` / `venue_schedule` + `updated_at` triggers + RLS + Realtime
+- `venue_schedule_override` (per-date exceptions: holidays, special hours) + `effective_venue_hours(date)` resolver that merges the override with the weekly default. `generate_daily_tasks` consults this instead of `venue_schedule` directly, so a date override flips task generation on/off for that specific date. `reason` is a free-form label for the admin UI + (future) venue status pill.
 - `categories` table (key pk, label_en, label_ja, sort_order, is_builtin) + RLS + Realtime — admin-editable via Admin → Categories.
 - `task_comments` table (daily_task_id, author_id, body, created_at, edited_at) + RLS + Realtime + body-diff edited_at trigger.
 - `profile_stats(target uuid default null)` RPC returning jsonb — powers Profile + peer StaffProfileView.
