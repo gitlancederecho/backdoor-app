@@ -299,40 +299,45 @@ struct HoursAdminView: View {
 
     @ViewBuilder
     private func overrideRow(_ ov: VenueScheduleOverride) -> some View {
-        Button {
-            editingOverride = .existing(ov)
-        } label: {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(OverrideDisplay.dateLabel(ov.date))
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(.white)
-                    Text(OverrideDisplay.statusLine(ov))
-                        .font(.caption)
-                        .foregroundColor(ov.isClosed == true ? .statusPending : .gray)
-                    if let reason = ov.reason, !reason.isEmpty {
-                        Text(reason)
-                            .font(.caption2)
-                            .foregroundColor(.gray)
-                            .lineLimit(2)
+        // Tapping the row edits; the ⋯ menu exposes Edit (redundant
+        // with the tap, but surfaces the pattern for consistency) +
+        // hard-delete with confirm alert.
+        HStack(alignment: .top, spacing: 12) {
+            Button {
+                editingOverride = .existing(ov)
+            } label: {
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(OverrideDisplay.dateLabel(ov.date))
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(.white)
+                        Text(OverrideDisplay.statusLine(ov))
+                            .font(.caption)
+                            .foregroundColor(ov.isClosed == true ? .statusPending : .gray)
+                        if let reason = ov.reason, !reason.isEmpty {
+                            Text(reason)
+                                .font(.caption2)
+                                .foregroundColor(.gray)
+                                .lineLimit(2)
+                        }
                     }
+                    Spacer(minLength: 0)
                 }
-                Spacer()
-                Button {
-                    overrideToDelete = ov
-                } label: {
-                    Image(systemName: "trash")
-                        .font(.system(size: 14))
-                        .foregroundColor(.statusPending)
-                        .padding(6)
-                }
-                .buttonStyle(.borderless)
+                .contentShape(Rectangle())
             }
-            .padding(14)
-            .cardStyle()
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+
+            RowMenu(
+                actions: [.edit(perform: { editingOverride = .existing(ov) })],
+                delete: RowDelete(
+                    behavior: .hard(titleKey: "delete_exception_confirm"),
+                    perform: { overrideToDelete = ov }
+                ),
+                onDelete: { _ in overrideToDelete = ov }
+            )
         }
-        .buttonStyle(.plain)
+        .padding(14)
+        .cardStyle()
     }
 }
 

@@ -29,6 +29,10 @@ struct TaskCompletionSheet: View {
     @State private var isPostingComment = false
     @State private var commentsRealtimeTask: Task<Void, Never>?
     @State private var commentsRealtimeChannel: RealtimeChannelV2?
+    /// Hard-delete confirmation — follows the uniform row-action
+    /// policy. Set from the comment row's ⋯ menu; cleared when the
+    /// alert resolves.
+    @State private var pendingCommentDelete: TaskComment?
 
     /// Live view of the task — re-reads from the VM each access so
     /// optimistic updates (reassign, complete, undo, note edits)
@@ -295,6 +299,19 @@ struct TaskCompletionSheet: View {
             )
             .environment(lang)
         }
+        .alert(
+            tr("delete_comment_confirm"),
+            isPresented: Binding(
+                get: { pendingCommentDelete != nil },
+                set: { if !$0 { pendingCommentDelete = nil } }
+            ),
+            presenting: pendingCommentDelete
+        ) { comment in
+            Button(tr("delete"), role: .destructive) {
+                Task { await deleteComment(comment) }
+            }
+            Button(tr("cancel"), role: .cancel) {}
+        }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         .preferredColorScheme(.dark)
@@ -429,19 +446,20 @@ struct TaskCompletionSheet: View {
                     }
                     Spacer()
                     if isOwn || auth.isAdmin {
-                        Menu {
-                            Button(role: .destructive) {
-                                Task { await deleteComment(c) }
-                            } label: {
-                                Label(tr("delete"), systemImage: "trash")
+                        RowMenu(
+                            delete: RowDelete(
+                                behavior: .hard(titleKey: "delete_comment_confirm"),
+                                perform: { Task { await deleteComment(c) } }
+                            ),
+                            onDelete: { _ in
+                                // Hard-delete flows through a
+                                // sheet-level alert; the RowMenu just
+                                // signals intent. `pendingCommentDelete`
+                                // drives the `.alert` at the top of
+                                // the view.
+                                pendingCommentDelete = c
                             }
-                        } label: {
-                            Image(systemName: "ellipsis")
-                                .font(.caption)
-                                .foregroundColor(.gray)
-                                .padding(.horizontal, 4)
-                        }
-                        .buttonStyle(.plain)
+                        )
                     }
                 }
                 Text(c.body)

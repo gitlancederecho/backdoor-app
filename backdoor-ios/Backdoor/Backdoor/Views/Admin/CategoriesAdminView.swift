@@ -244,23 +244,18 @@ private struct CategoryRow: View {
             }
             Spacer()
             if !isEditing {
-                // Normal mode: per-row edit + delete buttons. In a List
-                // row SwiftUI collapses multiple Buttons into a single
-                // tap target unless each has an explicit borderless
-                // style — that's what makes both buttons actually fire
-                // their own action.
-                HStack(spacing: 16) {
-                    Button(tr("edit"), action: onEdit)
-                        .font(.subheadline)
-                        .foregroundColor(.bdAccent)
-                        .buttonStyle(.borderless)
-                    if !category.isBuiltin {
-                        Button(tr("delete"), action: onDelete)
-                            .font(.subheadline)
-                            .foregroundColor(.statusPending)
-                            .buttonStyle(.borderless)
-                    }
-                }
+                // Uniform row-action menu — hard-delete (categories
+                // don't have is_active), so onDelete triggers the
+                // confirm alert at the list level. Built-ins hide
+                // the delete entry by omitting it from the spec.
+                RowMenu(
+                    actions: [.edit(perform: onEdit)],
+                    delete: category.isBuiltin ? nil : RowDelete(
+                        behavior: .hard(titleKey: "delete_category_confirm"),
+                        perform: onDelete
+                    ),
+                    onDelete: { _ in onDelete() }
+                )
             }
             // In edit mode, SwiftUI automatically renders the selection
             // circle (from List(selection:)) and the drag handle
