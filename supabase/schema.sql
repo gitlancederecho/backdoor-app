@@ -43,6 +43,8 @@ create table if not exists tasks (
 -- Idempotent add-column guards (for DBs created before these fields existed).
 alter table tasks add column if not exists start_time time;
 alter table tasks add column if not exists end_time time;
+-- `tasks.folder_id` (references task_folders.id) is added after the
+-- task_folders table is created, further down in this file.
 
 create table if not exists daily_tasks (
   id uuid primary key default gen_random_uuid(),
@@ -91,6 +93,30 @@ insert into categories (key, label_en, label_ja, sort_order, is_builtin) values
   ('weekly',   'Weekly',   '週次',      5, true),
   ('other',    'Other',    'その他',    6, true)
 on conflict (key) do nothing;
+
+-- ---------- Task folders ------------------------------------------------
+-- Admin's organizational bucket for tasks — separate from `categories`
+-- (which is the operational classification). A task template belongs to
+-- zero or one folder; `tasks.folder_id IS NULL` = "Unfiled," shown
+-- outside any folder at the top of the Admin → Tasks list. Soft-delete
+-- via `is_active=false`; on delete we also null the folder_id on all
+-- tasks currently in the folder so they fall back to Unfiled.
+create table if not exists task_folders (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  description text,
+  color text,
+  sort_order smallint not null default 0,
+  is_active boolean not null default true,
+  created_by uuid references staff(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+-- Admin's organizational grouping on tasks. Separate from category.
+-- NULL = "Unfiled," shown outside any folder at the top of Admin → Tasks.
+alter table tasks add column if not exists folder_id uuid references task_folders(id) on delete set null;
+create index if not exists tasks_folder_id_idx on tasks(folder_id);
 
 -- ---------- Task events (audit log) -------------------------------------
 -- Append-only log of every meaningful change to a daily_task. Written by
@@ -250,6 +276,11 @@ create trigger venue_schedule_override_updated_at
 drop trigger if exists categories_updated_at on categories;
 create trigger categories_updated_at
   before update on categories
+  for each row execute function set_updated_at();
+
+drop trigger if exists task_folders_updated_at on task_folders;
+create trigger task_folders_updated_at
+  before update on task_folders
   for each row execute function set_updated_at();
 
 -- ---------- Helper: current staff row -----------------------------------
@@ -431,6 +462,7 @@ alter table venue_schedule enable row level security;
 alter table venue_schedule_override enable row level security;
 alter table task_events enable row level security;
 alter table categories enable row level security;
+alter table task_folders enable row level security;
 alter table task_comments enable row level security;
 
 -- staff: everyone authenticated can read; admin can write anything;
@@ -525,6 +557,15 @@ drop policy if exists categories_admin_write on categories;
 create policy categories_admin_write on categories
   for all using (is_admin()) with check (is_admin());
 
+-- task_folders: same policy shape as categories.
+drop policy if exists task_folders_read on task_folders;
+create policy task_folders_read on task_folders
+  for select using (auth.role() = 'authenticated');
+
+drop policy if exists task_folders_admin_write on task_folders;
+create policy task_folders_admin_write on task_folders
+  for all using (is_admin()) with check (is_admin());
+
 -- task_events: append-only audit log.
 -- Everyone authenticated can read. Authenticated users can insert as long
 -- as actor_id is null (system) or matches their own staff.id (no
@@ -606,6 +647,9 @@ begin
     exception when duplicate_object then null;
   end;
   begin alter publication supabase_realtime add table venue_schedule_override;
+    exception when duplicate_object then null;
+  end;
+  begin alter publication supabase_realtime add table task_folders;
     exception when duplicate_object then null;
   end;
 end $$;

@@ -8,6 +8,11 @@ final class AdminViewModel {
     var allStaff: [Staff] = []
     var taskTemplates: [TaskTemplate] = []
     var categories: [Category] = []
+    /// Active folders, sorted by sort_order. Inactive (soft-deleted)
+    /// folders are excluded — tasks that referenced them get their
+    /// folder_id set NULL by `ON DELETE SET NULL`, so they fall back
+    /// to Unfiled.
+    var folders: [TaskFolder] = []
     var isLoading = false
 
     init() {
@@ -38,10 +43,149 @@ final class AdminViewModel {
             .order("sort_order")
             .execute()
             .value) ?? []
+        async let foldersResult: [TaskFolder] = (try? supabase
+            .from("task_folders")
+            .select()
+            .eq("is_active", value: true)
+            .order("sort_order")
+            .execute()
+            .value) ?? []
         allStaff = await staffResult
         taskTemplates = await tasksResult
         categories = await categoriesResult
+        folders = await foldersResult
         isLoading = false
+    }
+
+    // MARK: - Folder CRUD
+
+    private func fetchFolders() async {
+        let rows: [TaskFolder] = (try? await supabase
+            .from("task_folders")
+            .select()
+            .eq("is_active", value: true)
+            .order("sort_order")
+            .execute()
+            .value) ?? []
+        folders = rows
+    }
+
+    func createFolder(name: String, description: String? = nil) async throws {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let nextOrder = Int16(clamping: (folders.map { Int($0.sortOrder) }.max() ?? 0) + 1)
+        let cleanDescription: String? = {
+            let t = description?.trimmingCharacters(in: .whitespaces) ?? ""
+            return t.isEmpty ? nil : t
+        }()
+        let row = NewTaskFolder(
+            name: trimmed,
+            description: cleanDescription,
+            color: nil,
+            sortOrder: nextOrder,
+            createdBy: await currentStaffId()
+        )
+        try await supabase.from("task_folders").insert(row).execute()
+        await fetchFolders()
+    }
+
+    func renameFolder(_ folder: TaskFolder, to newName: String) async throws {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != folder.name else { return }
+        try await supabase
+            .from("task_folders")
+            .update(TaskFolderPatch(name: trimmed))
+            .eq("id", value: folder.id)
+            .execute()
+        await fetchFolders()
+    }
+
+    /// Soft-delete a folder. Tasks that referenced it land in Unfiled
+    /// via the `ON DELETE SET NULL` on tasks.folder_id — but we're
+    /// doing a soft-delete (is_active=false), not a hard delete, so
+    /// the FK doesn't fire. Instead, null out folder_id on all tasks
+    /// currently in this folder so they surface under Unfiled.
+    func deleteFolder(_ folder: TaskFolder) async throws {
+        // Null folder_id on every task currently in this folder.
+        struct Patch: Encodable {
+            let folderId: UUID?
+            enum CodingKeys: String, CodingKey { case folderId = "folder_id" }
+            func encode(to encoder: Encoder) throws {
+                var c = encoder.container(keyedBy: CodingKeys.self)
+                try c.encode(folderId, forKey: .folderId)
+            }
+        }
+        _ = try? await supabase
+            .from("tasks")
+            .update(Patch(folderId: nil))
+            .eq("folder_id", value: folder.id)
+            .execute()
+
+        try await supabase
+            .from("task_folders")
+            .update(TaskFolderPatch(isActive: false))
+            .eq("id", value: folder.id)
+            .execute()
+        await fetchFolders()
+        await fetchAll()  // tasks' folder_id changed, reload
+    }
+
+    /// Persist the current `folders` order.
+    func persistFolderOrder() async {
+        for (index, f) in folders.enumerated() {
+            let desired = Int16(clamping: index + 1)
+            if f.sortOrder != desired {
+                _ = try? await supabase
+                    .from("task_folders")
+                    .update(TaskFolderPatch(sortOrder: desired))
+                    .eq("id", value: f.id)
+                    .execute()
+            }
+        }
+        await fetchFolders()
+    }
+
+    /// Move a single task to a folder (or to Unfiled when `folderId` is nil).
+    func moveTask(_ task: TaskTemplate, toFolder folderId: UUID?) async throws {
+        struct Patch: Encodable {
+            let folderId: UUID?
+            enum CodingKeys: String, CodingKey { case folderId = "folder_id" }
+            func encode(to encoder: Encoder) throws {
+                var c = encoder.container(keyedBy: CodingKeys.self)
+                try c.encode(folderId, forKey: .folderId)
+            }
+        }
+        try await supabase
+            .from("tasks")
+            .update(Patch(folderId: folderId))
+            .eq("id", value: task.id)
+            .execute()
+        await fetchAll()
+    }
+
+    /// Bulk-move: reassign `folder_id` on every task in `ids` in a
+    /// single request. nil folderId = move to Unfiled.
+    func moveTasks(ids: [UUID], toFolder folderId: UUID?) async {
+        struct Patch: Encodable {
+            let folderId: UUID?
+            enum CodingKeys: String, CodingKey { case folderId = "folder_id" }
+            func encode(to encoder: Encoder) throws {
+                var c = encoder.container(keyedBy: CodingKeys.self)
+                try c.encode(folderId, forKey: .folderId)
+            }
+        }
+        _ = try? await supabase
+            .from("tasks")
+            .update(Patch(folderId: folderId))
+            .in("id", values: ids)
+            .execute()
+        await fetchAll()
+    }
+
+    /// How many *active* templates currently live in a given folder.
+    /// Used for the "5 tasks" count on the folder row in Admin → Tasks.
+    func taskCount(inFolder folderId: UUID?) -> Int {
+        taskTemplates.filter { $0.folderId == folderId }.count
     }
 
     // MARK: - Category CRUD

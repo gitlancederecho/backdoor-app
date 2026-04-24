@@ -148,7 +148,42 @@ struct TaskTemplate: Codable, Identifiable {
     var startTime: String?
     /// "HH:mm:ss" — latest time (deadline). Optional.
     var endTime: String?
+    /// Admin's organizational bucket (distinct from `category`).
+    /// nil = "Unfiled" — shown outside any folder at the top of the
+    /// Admin → Tasks list.
+    var folderId: UUID?
     let createdAt: Date
+}
+
+/// Admin-level grouping for task templates. See CLAUDE.md for the
+/// folder vs. category distinction (folders = organizational bucket;
+/// categories = operational classification).
+struct TaskFolder: Codable, Identifiable, Hashable {
+    let id: UUID
+    var name: String
+    var description: String?
+    var color: String?
+    var sortOrder: Int16
+    var isActive: Bool
+    var createdBy: UUID?
+    let createdAt: Date
+    var updatedAt: Date?
+}
+
+struct NewTaskFolder: Encodable {
+    var name: String
+    var description: String?
+    var color: String?
+    var sortOrder: Int16
+    var createdBy: UUID?
+}
+
+struct TaskFolderPatch: Encodable {
+    var name: String?
+    var description: String?
+    var color: String?
+    var sortOrder: Int16?
+    var isActive: Bool?
 }
 
 struct DailyTask: Codable, Identifiable {
@@ -298,6 +333,8 @@ struct NewTask: Encodable {
     var startTime: String?
     /// "HH:mm:ss" or nil.
     var endTime: String?
+    /// Admin organizational bucket (nil = Unfiled).
+    var folderId: UUID?
 }
 
 /// Row-level insert for daily_tasks. Used when we need to materialize a
