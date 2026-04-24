@@ -12,6 +12,7 @@ final class TaskViewModel {
 
     private(set) var date: String
     private nonisolated(unsafe) var realtimeTask: Task<Void, Never>?
+    private nonisolated(unsafe) var realtimeChannel: RealtimeChannelV2?
 
     init(date: String = todayISO()) {
         self.date = date
@@ -22,7 +23,7 @@ final class TaskViewModel {
         isLoading = true
         await generateIfNeeded()
         await fetchTasks()
-        startRealtime()
+        await startRealtime()
     }
 
     private func generateIfNeeded() async {
@@ -60,33 +61,46 @@ final class TaskViewModel {
         await fetchTasks()
     }
 
-    /// Swap the board to a different business-day ISO date. Cancels the
-    /// existing realtime subscription (scoped to the previous date),
-    /// re-runs generate_daily_tasks for the target, reloads, and
-    /// resubscribes on the new date's channel.
+    /// Swap the board to a different business-day ISO date. Tears down
+    /// the existing realtime subscription (scoped to the previous
+    /// date), re-runs generate_daily_tasks for the target, reloads,
+    /// and resubscribes on the new date's channel.
     func setDate(_ newDate: String) async {
         guard newDate != date else { return }
         date = newDate
-        realtimeTask?.cancel()
-        realtimeTask = nil
         tasks = []
         isLoading = true
         await generateIfNeeded()
         await fetchTasks()
-        startRealtime()
+        await startRealtime()
     }
 
-    private func startRealtime() {
+    /// Supabase caches channels by topic, so calling `channel(topic)`
+    /// a second time returns the *same* already-subscribed instance —
+    /// and adding a new `postgresChange` callback to an already-
+    /// subscribed channel throws. Explicitly `removeChannel` on
+    /// teardown so the next `startRealtime` gets a fresh binding.
+    private func stopRealtime() async {
         realtimeTask?.cancel()
+        realtimeTask = nil
+        if let ch = realtimeChannel {
+            await supabase.removeChannel(ch)
+            realtimeChannel = nil
+        }
+    }
+
+    private func startRealtime() async {
+        await stopRealtime()
+        let channel = supabase.channel("daily_tasks_ios_\(date)")
+        let changes = channel.postgresChange(
+            AnyAction.self,
+            schema: "public",
+            table: "daily_tasks",
+            filter: "date=eq.\(date)"
+        )
+        await channel.subscribe()
+        realtimeChannel = channel
         realtimeTask = Task {
-            let channel = supabase.channel("daily_tasks_ios_\(date)")
-            let changes = channel.postgresChange(
-                AnyAction.self,
-                schema: "public",
-                table: "daily_tasks",
-                filter: "date=eq.\(date)"
-            )
-            await channel.subscribe()
             for await _ in changes {
                 guard !Task.isCancelled else { break }
                 await fetchTasks()

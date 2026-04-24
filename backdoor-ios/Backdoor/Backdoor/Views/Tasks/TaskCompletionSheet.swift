@@ -28,6 +28,7 @@ struct TaskCompletionSheet: View {
     @State private var commentDraft: String = ""
     @State private var isPostingComment = false
     @State private var commentsRealtimeTask: Task<Void, Never>?
+    @State private var commentsRealtimeChannel: RealtimeChannelV2?
 
     /// Live view of the task — re-reads from the VM each access so
     /// optimistic updates (reassign, complete, undo, note edits)
@@ -268,11 +269,10 @@ struct TaskCompletionSheet: View {
             Task { await loadHistory() }
             Task { await loadReassignableStaffIfNeeded() }
             Task { await loadComments() }
-            subscribeToComments()
+            Task { await subscribeToComments() }
         }
         .onDisappear {
-            commentsRealtimeTask?.cancel()
-            commentsRealtimeTask = nil
+            Task { await unsubscribeFromComments() }
         }
         .sheet(isPresented: $showingReassignPicker) {
             SearchablePickerSheet<String>(
@@ -452,21 +452,35 @@ struct TaskCompletionSheet: View {
         comments = await taskVM.fetchComments(for: task.id)
     }
 
-    private func subscribeToComments() {
-        commentsRealtimeTask?.cancel()
+    /// Supabase caches channels by topic — re-opening the sheet for
+    /// the same task would hit the already-subscribed instance and
+    /// throw when we add a `postgresChange` callback. Teardown must
+    /// `removeChannel` so the next subscribe gets a fresh binding.
+    private func subscribeToComments() async {
+        await unsubscribeFromComments()
+        let channel = supabase.channel("task_comments_\(task.id)")
+        let changes = channel.postgresChange(
+            AnyAction.self,
+            schema: "public",
+            table: "task_comments",
+            filter: "daily_task_id=eq.\(task.id)"
+        )
+        await channel.subscribe()
+        commentsRealtimeChannel = channel
         commentsRealtimeTask = Task {
-            let channel = supabase.channel("task_comments_\(task.id)")
-            let changes = channel.postgresChange(
-                AnyAction.self,
-                schema: "public",
-                table: "task_comments",
-                filter: "daily_task_id=eq.\(task.id)"
-            )
-            await channel.subscribe()
             for await _ in changes {
                 guard !Task.isCancelled else { break }
                 await loadComments()
             }
+        }
+    }
+
+    private func unsubscribeFromComments() async {
+        commentsRealtimeTask?.cancel()
+        commentsRealtimeTask = nil
+        if let ch = commentsRealtimeChannel {
+            await supabase.removeChannel(ch)
+            commentsRealtimeChannel = nil
         }
     }
 
