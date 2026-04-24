@@ -31,6 +31,15 @@ struct FolderTasksView: View {
     @State private var selectedIds: Set<UUID> = []
     @State private var showBulkDeleteConfirm = false
     @State private var showingMoveTarget = false
+    @State private var showingSingleMoveTarget = false
+    @State private var singleMoveTask: TaskTemplate?
+
+    /// Single-row soft-delete undo state — mirrors the pattern on
+    /// the `TasksAdminView` root so folder-scoped deletes are just
+    /// as forgiving.
+    @State private var pendingUndo: TaskTemplate?
+    @State private var undoDismissTask: Task<Void, Never>?
+    private let undoWindow: Duration = .seconds(5)
 
     private var folderTasks: [TaskTemplate] {
         let q = searchText.trimmingCharacters(in: .whitespaces)
@@ -90,7 +99,17 @@ struct FolderTasksView: View {
                 .padding(.trailing, 20)
                 .padding(.bottom, 24)
             }
+
+            if let template = pendingUndo {
+                UndoToast(labelKey: "task_deleted_toast") {
+                    handleUndo(template)
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 24)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }
+        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: pendingUndo?.id)
         .sheet(isPresented: $showingNew) {
             // New task seeded with this folder pre-selected.
             TaskEditorSheet(task: nil, adminVM: adminVM, initialFolderId: folder.id)
@@ -152,6 +171,20 @@ struct FolderTasksView: View {
             )
             .environment(lang)
         }
+        .sheet(isPresented: $showingSingleMoveTarget) {
+            MoveToFolderPicker(
+                currentFolderId: folder.id,
+                folders: adminVM.folders,
+                onPick: { target in
+                    guard let t = singleMoveTask else { return }
+                    Task {
+                        try? await adminVM.moveTask(t, toFolder: target)
+                        singleMoveTask = nil
+                    }
+                }
+            )
+            .environment(lang)
+        }
         .alert(
             tr("delete_n_tasks_confirm"),
             isPresented: $showBulkDeleteConfirm,
@@ -183,6 +216,32 @@ struct FolderTasksView: View {
         } message: {
             Text(tr("delete_folder_message"))
         }
+    }
+
+    // MARK: - Single-row delete / undo
+    //
+    // Mirrors the policy at the TasksAdminView root: single-row
+    // soft-delete gets no confirm alert, but an undo toast covers the
+    // next 5 seconds. Bulk delete keeps its own alert (handled by the
+    // bulk bar + alert wiring below).
+
+    private func handleDelete(_ task: TaskTemplate) {
+        undoDismissTask?.cancel()
+        Task {
+            try? await adminVM.deleteTask(task)
+            pendingUndo = task
+            undoDismissTask = Task {
+                try? await Task.sleep(for: undoWindow)
+                guard !Task.isCancelled else { return }
+                pendingUndo = nil
+            }
+        }
+    }
+
+    private func handleUndo(_ task: TaskTemplate) {
+        undoDismissTask?.cancel()
+        pendingUndo = nil
+        Task { try? await adminVM.undoDeleteTask(task) }
     }
 
     // MARK: - Folder header
@@ -319,8 +378,10 @@ struct FolderTasksView: View {
                         allStaff: adminVM.allStaff,
                         isEditing: editMode.isEditing,
                         onEdit: { editingTask = task },
-                        onDelete: {
-                            Task { try? await adminVM.deleteTask(task) }
+                        onDelete: { handleDelete(task) },
+                        onMove: {
+                            singleMoveTask = task
+                            showingSingleMoveTarget = true
                         }
                     )
                     .tag(task.id)

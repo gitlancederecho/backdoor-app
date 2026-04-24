@@ -153,6 +153,35 @@ Key reusables in `backdoor-ios/Backdoor/Backdoor/Views/Components/`:
 
 Admin edit-mode pattern is in place on Tasks, Categories, Staff — `List(selection:)` with per-row `.buttonStyle(.borderless)`, top-right Edit/Done toggle, bottom bulk-action bar. Categories also support drag-to-reorder via `.onMove` persisted to `sort_order`.
 
+## Row-action policy (uniform across the app)
+
+Every list/card row that has per-item actions uses the shared
+`RowMenu` component (`Views/Components/RowMenu.swift`) — a
+single-button `⋯` menu seeded with `RowAction` values. Presets
+cover `edit`, `share`, `reassign`, `move`. Custom actions go
+through the free-form initializer.
+
+Delete semantics are codified via `RowDelete` + `RowDeleteBehavior`:
+
+| Case | Confirmation | Undo |
+| --- | --- | --- |
+| Single-row soft-delete (`is_active = false`) | none | `UndoToast` (5 s) |
+| Single-row hard-delete | `.alert` | no |
+| Bulk delete (any) | `.alert` | no — use "Show deleted" to restore |
+
+The `UndoToast` component (`Views/Components/UndoToast.swift`) is
+the single shared look; host views manage an `UndoSpec` + a
+cancellable dismiss `Task`. See `TasksAdminView` and
+`FolderTasksView` for the canonical wiring — both implement the
+exact same `handleDelete(_:)` / `handleUndo(_:)` / `UndoToast`
+presentation so behavior is uniform whether you're at the Unfiled
+root or drilled into a folder.
+
+New row surfaces should compose `RowMenu` rather than rolling an
+inline row-menu; new delete paths should pick a `RowDeleteBehavior`
+and wire the existing toast/alert plumbing rather than inventing
+their own.
+
 ## Gotchas hit this session
 
 - **Dict-literal duplicate keys trap at runtime.** `Localization.swift` uses `[String: String]` literals; duplicate keys crash with `Fatal error: Dictionary literal contains duplicate keys.` the first time `tr(...)` runs — often "app won't load" in practice. Before adding new keys, grep both `enStrings` and `jaStrings` for the proposed key. A full scan (it's a 500+ line file): `python3 -c "import re; b=open('backdoor-ios/.../Localization.swift').read(); …"` — pattern is in the commit `5cbc27b`.

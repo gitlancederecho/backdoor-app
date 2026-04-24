@@ -408,26 +408,11 @@ struct TasksAdminView: View {
 
     @ViewBuilder
     private func undoToast(for task: TaskTemplate) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: "trash")
-                .foregroundColor(.statusPending)
-            Text(tr("task_deleted_toast"))
-                .font(.subheadline)
-                .foregroundColor(.white)
-            Spacer()
-            Button(tr("undo")) { handleUndo(task) }
-                .font(.subheadline.weight(.semibold))
-                .foregroundColor(.bdAccent)
+        // Uses the shared `UndoToast` component so the look stays
+        // consistent with every other soft-delete surface.
+        UndoToast(labelKey: "task_deleted_toast") {
+            handleUndo(task)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(Color.bgCard)
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.bdBorder, lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .shadow(color: .black.opacity(0.35), radius: 12, y: 4)
     }
 
     // MARK: - Filter bar
@@ -582,6 +567,10 @@ struct TaskTemplateRow: View {
     let isEditing: Bool
     let onEdit: () -> Void
     let onDelete: () -> Void
+    /// Optional move action (Unfiled root passes through to `move`
+    /// picker; inside a folder, caller also passes a move action so
+    /// admins can move single tasks without entering edit mode).
+    var onMove: (() -> Void)? = nil
     @Environment(LanguageManager.self) private var lang
 
     private var displayTitle: String {
@@ -651,16 +640,21 @@ struct TaskTemplateRow: View {
             }
             Spacer()
             if !isEditing {
-                HStack(spacing: 16) {
-                    Button(tr("edit"), action: onEdit)
-                        .font(.subheadline)
-                        .foregroundColor(.bdAccent)
-                        .buttonStyle(.borderless)
-                    Button(tr("delete"), action: onDelete)
-                        .font(.subheadline)
-                        .foregroundColor(.statusPending)
-                        .buttonStyle(.borderless)
-                }
+                // The host's `onDelete` is a closure that performs the
+                // soft-delete AND presents the undo toast — so we pass
+                // it straight through and RowMenu fires it on tap.
+                // Undo semantics (toast + restore) live at the list
+                // level, not here.
+                RowMenu(
+                    actions: [
+                        .edit(perform: onEdit),
+                        .move(isVisible: onMove != nil, perform: onMove ?? {})
+                    ],
+                    delete: RowDelete(
+                        behavior: .soft(undo: {}),
+                        perform: onDelete
+                    )
+                )
             }
             // In edit mode, List renders the selection circle for us —
             // keep the row uncluttered so the selection affordance is
