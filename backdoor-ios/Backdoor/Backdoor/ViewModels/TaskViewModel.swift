@@ -11,8 +11,8 @@ final class TaskViewModel {
     var error: String?
 
     private(set) var date: String
-    private nonisolated(unsafe) var realtimeTask: Task<Void, Never>?
-    private nonisolated(unsafe) var realtimeChannel: RealtimeChannelV2?
+    private var realtimeTask: Task<Void, Never>?
+    private var realtimeChannel: RealtimeChannelV2?
 
     init(date: String = todayISO()) {
         self.date = date
@@ -27,7 +27,7 @@ final class TaskViewModel {
     }
 
     private func generateIfNeeded() async {
-        try? await supabase
+        _ = try? await supabase
             .rpc("generate_daily_tasks", params: ["target_date": date])
             .execute()
     }
@@ -96,9 +96,9 @@ final class TaskViewModel {
             AnyAction.self,
             schema: "public",
             table: "daily_tasks",
-            filter: "date=eq.\(date)"
+            filter: .eq("date", value: date)
         )
-        await channel.subscribe()
+        try? await channel.subscribeWithError()
         realtimeChannel = channel
         realtimeTask = Task {
             for await _ in changes {
@@ -420,10 +420,6 @@ final class TaskViewModel {
             .eq("id", value: id)
             .execute()
     }
-
-    deinit {
-        realtimeTask?.cancel()
-    }
 }
 
 // MARK: - Photo upload
@@ -440,7 +436,7 @@ func uploadTaskPhoto(taskId: UUID, date: String, imageData: Data, mimeType: Stri
 
 // MARK: - Helpers
 
-func todayISO() -> String {
+nonisolated func todayISO() -> String {
     let f = DateFormatter()
     f.dateFormat = "yyyy-MM-dd"
     f.locale = Locale(identifier: "en_US_POSIX")

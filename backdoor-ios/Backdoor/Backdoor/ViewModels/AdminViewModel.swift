@@ -85,7 +85,7 @@ final class AdminViewModel {
         for (index, cat) in categories.enumerated() {
             let desired = Int16(clamping: index + 1)
             if cat.sortOrder != desired {
-                try? await supabase
+                _ = try? await supabase
                     .from("categories")
                     .update(CategoryPatch(sortOrder: desired))
                     .eq("key", value: cat.key)
@@ -161,7 +161,7 @@ final class AdminViewModel {
             _ = try? await supabase.from("daily_tasks").insert(ad).execute()
         }
 
-        try? await supabase.rpc("generate_daily_tasks").execute()
+        _ = try? await supabase.rpc("generate_daily_tasks").execute()
         await fetchAll()
     }
 
@@ -184,7 +184,7 @@ final class AdminViewModel {
             var startTime: String?
             var endTime: String?
         }
-        try? await supabase
+        _ = try? await supabase
             .from("daily_tasks")
             .update(PropagatePatch(
                 assignedTo: task.assignedTo,
@@ -209,7 +209,7 @@ final class AdminViewModel {
             _ = try? await supabase.from("task_events").insert(event).execute()
         }
 
-        try? await supabase.rpc("generate_daily_tasks").execute()
+        _ = try? await supabase.rpc("generate_daily_tasks").execute()
         await fetchAll()
     }
 

@@ -179,8 +179,9 @@ struct TaskCompletionSheet: View {
                                 } placeholder: { Color.bgElevated }
                                     .frame(maxWidth: .infinity).frame(height: 200)
                                     .clipShape(RoundedRectangle(cornerRadius: 12))
+                                let replaceLabel = tr("replace_photo")
                                 PhotosPicker(selection: $selectedPhoto, matching: .images) {
-                                    Label(tr("replace_photo"), systemImage: "arrow.triangle.2.circlepath")
+                                    Label(replaceLabel, systemImage: "arrow.triangle.2.circlepath")
                                         .font(.caption.bold())
                                         .foregroundColor(.white)
                                         .padding(.horizontal, 10).padding(.vertical, 5)
@@ -190,8 +191,9 @@ struct TaskCompletionSheet: View {
                                 .padding(8)
                             }
                         } else {
+                            let chooseLabel = tr("choose_photo")
                             PhotosPicker(selection: $selectedPhoto, matching: .images) {
-                                Label(tr("choose_photo"), systemImage: "camera")
+                                Label(chooseLabel, systemImage: "camera")
                                     .font(.subheadline)
                                     .foregroundColor(.white)
                                     .frame(maxWidth: .infinity)
@@ -463,9 +465,9 @@ struct TaskCompletionSheet: View {
             AnyAction.self,
             schema: "public",
             table: "task_comments",
-            filter: "daily_task_id=eq.\(task.id)"
+            filter: .eq("daily_task_id", value: task.id)
         )
-        await channel.subscribe()
+        try? await channel.subscribeWithError()
         commentsRealtimeChannel = channel
         commentsRealtimeTask = Task {
             for await _ in changes {

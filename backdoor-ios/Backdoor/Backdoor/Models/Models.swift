@@ -237,16 +237,19 @@ struct NewTaskComment: Encodable {
 
 // MARK: - Time helpers
 
+/// Pure helpers — `nonisolated` so callers in `Codable` / `Hashable`
+/// synthesis and synchronous struct methods compile cleanly under the
+/// MainActor default-isolation flag.
 enum TimeOfDay {
     /// Parse "HH:mm:ss" or "HH:mm" into (hour, minute) — today's date at that time.
-    static func parse(_ timeString: String) -> (hour: Int, minute: Int)? {
+    nonisolated static func parse(_ timeString: String) -> (hour: Int, minute: Int)? {
         let parts = timeString.split(separator: ":").compactMap { Int($0) }
         guard parts.count >= 2 else { return nil }
         return (parts[0], parts[1])
     }
 
     /// Format a Date into "HH:mm:ss" (DB format).
-    static func dbString(from date: Date) -> String {
+    nonisolated static func dbString(from date: Date) -> String {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "HH:mm:ss"
@@ -254,7 +257,7 @@ enum TimeOfDay {
     }
 
     /// Format "HH:mm:ss" into a user-facing "17:00" (locale-respecting).
-    static func displayString(from timeString: String) -> String {
+    nonisolated static func displayString(from timeString: String) -> String {
         guard let (h, m) = parse(timeString) else { return timeString }
         let f = DateFormatter()
         f.timeStyle = .short
@@ -266,13 +269,13 @@ enum TimeOfDay {
     }
 
     /// Minutes from midnight.
-    static func minutesFromMidnight(_ timeString: String) -> Int? {
+    nonisolated static func minutesFromMidnight(_ timeString: String) -> Int? {
         guard let (h, m) = parse(timeString) else { return nil }
         return h * 60 + m
     }
 
     /// Minutes from midnight for Date.now (user's local tz).
-    static var nowMinutes: Int {
+    nonisolated static var nowMinutes: Int {
         let comps = Calendar.current.dateComponents([.hour, .minute], from: Date())
         return (comps.hour ?? 0) * 60 + (comps.minute ?? 0)
     }

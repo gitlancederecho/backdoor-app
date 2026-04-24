@@ -38,8 +38,9 @@ struct ProfileEditSheet: View {
                         }
                         .overlay(Circle().stroke(Color.bdBorder, lineWidth: 1))
 
+                        let changePhotoLabel = tr("change_photo")
                         PhotosPicker(selection: $pickedPhoto, matching: .images) {
-                            Text(tr("change_photo"))
+                            Text(changePhotoLabel)
                                 .font(.subheadline.weight(.medium))
                                 .foregroundColor(.bdAccent)
                         }
