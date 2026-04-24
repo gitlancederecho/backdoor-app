@@ -28,73 +28,74 @@ struct AdminView: View {
         ZStack {
             Color.bgPrimary.ignoresSafeArea()
             VStack(spacing: 0) {
-                // Header
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack(spacing: 12) {
-                        Text(tr("tab_admin"))
-                            .font(.title2.bold())
+                // Header: title + secondary-admin icon buttons
+                HStack(spacing: 12) {
+                    Text(tr("tab_admin"))
+                        .font(.title2.bold())
+                        .foregroundColor(.white)
+
+                    Spacer()
+
+                    Button { showingStaff = true } label: {
+                        Image(systemName: "person.2.fill")
+                            .font(.system(size: 16, weight: .medium))
                             .foregroundColor(.white)
-
-                        Spacer()
-
-                        Button { showingStaff = true } label: {
-                            Image(systemName: "person.2.fill")
-                                .font(.system(size: 16, weight: .medium))
-                                .foregroundColor(.white)
-                                .frame(width: 36, height: 36)
-                                .background(Color.bgElevated)
-                                .clipShape(Circle())
-                        }
-                        .accessibilityLabel(tr("admin_open_staff"))
-
-                        Button { showingHours = true } label: {
-                            Image(systemName: "clock.fill")
-                                .font(.system(size: 16, weight: .medium))
-                                .foregroundColor(.white)
-                                .frame(width: 36, height: 36)
-                                .background(Color.bgElevated)
-                                .clipShape(Circle())
-                        }
-                        .accessibilityLabel(tr("admin_open_hours"))
-
-                        Button { showingHistory = true } label: {
-                            Image(systemName: "clock.arrow.circlepath")
-                                .font(.system(size: 16, weight: .medium))
-                                .foregroundColor(.white)
-                                .frame(width: 36, height: 36)
-                                .background(Color.bgElevated)
-                                .clipShape(Circle())
-                        }
-                        .accessibilityLabel(tr("admin_open_history"))
+                            .frame(width: 36, height: 36)
+                            .background(Color.bgElevated)
+                            .clipShape(Circle())
                     }
+                    .accessibilityLabel(tr("admin_open_staff"))
 
-                    // Segmented pills — only the selected pill carries
-                    // a background so the "you are here" signal isn't
-                    // diluted by low-contrast neighbors.
-                    HStack(spacing: 4) {
-                        ForEach(AdminTab.allCases, id: \.self) { t in
-                            Button {
-                                tab = t
-                            } label: {
-                                Text(t.localized)
-                                    .font(.subheadline.weight(tab == t ? .semibold : .regular))
-                                    .foregroundColor(tab == t ? .black : .gray)
-                                    .padding(.horizontal, 14)
-                                    .padding(.vertical, 7)
-                                    .background(tab == t ? Color.bdAccent : Color.clear)
-                                    .clipShape(Capsule())
-                                    .contentShape(Capsule())
-                            }
-                            .buttonStyle(.plain)
-                        }
-                        Spacer(minLength: 0)
+                    Button { showingHours = true } label: {
+                        Image(systemName: "clock.fill")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundColor(.white)
+                            .frame(width: 36, height: 36)
+                            .background(Color.bgElevated)
+                            .clipShape(Circle())
                     }
+                    .accessibilityLabel(tr("admin_open_hours"))
+
+                    Button { showingHistory = true } label: {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundColor(.white)
+                            .frame(width: 36, height: 36)
+                            .background(Color.bgElevated)
+                            .clipShape(Circle())
+                    }
+                    .accessibilityLabel(tr("admin_open_history"))
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
-                .padding(.bottom, 12)
+                .padding(.bottom, 14)
 
-                Divider().background(Color.bdBorder)
+                // Folder-tab row: the selected tab has `bgPrimary`
+                // (same as body), so it "cuts through" the `bgCard`
+                // band and visually merges into the content below.
+                HStack(spacing: 0) {
+                    ForEach(AdminTab.allCases, id: \.self) { t in
+                        Button { tab = t } label: {
+                            Text(t.localized)
+                                .font(.subheadline.weight(tab == t ? .semibold : .regular))
+                                .foregroundColor(tab == t ? .white : .gray)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .background(
+                                    UnevenRoundedRectangle(
+                                        cornerRadii: tab == t
+                                            ? .init(topLeading: 14, bottomLeading: 0,
+                                                    bottomTrailing: 0, topTrailing: 14)
+                                            : .init()
+                                    )
+                                    .fill(tab == t ? Color.bgPrimary : Color.clear)
+                                )
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .background(Color.bgCard)
 
                 // Content
                 switch tab {
