@@ -52,11 +52,34 @@ enum BusinessDay {
         return (h, m, h * 60 + m)
     }
 
+    /// The effective `VenueDay` for a calendar date — the weekday default
+    /// from `schedule` overlaid with that date's `venue_schedule_override`
+    /// row (if any). Mirrors the SQL `effective_venue_hours(date)` so the
+    /// client and server agree on what "open on date X" means.
+    static func effectiveDay(
+        for date: Date,
+        schedule: [VenueDay],
+        overrides: [VenueScheduleOverride],
+        tz: TimeZone
+    ) -> VenueDay? {
+        let wd = isodow(date, tz: tz)
+        guard let base = schedule.first(where: { $0.weekday == wd }) else { return nil }
+        guard let ov = overrides.first(where: { $0.date == iso(date, tz: tz) }) else { return base }
+        return VenueDay(
+            weekday: base.weekday,
+            isClosed: ov.isClosed ?? base.isClosed,
+            openTime: ov.openTime ?? base.openTime,
+            closeTime: ov.closeTime ?? base.closeTime,
+            updatedAt: base.updatedAt
+        )
+    }
+
     /// Calculate the current business-day ISO date for the given moment, schedule, and venue settings.
     /// Includes grace period handling for unforeseen overtime.
     static func currentBusinessDayISO(
         now: Date = Date(),
         schedule: [VenueDay],
+        overrides: [VenueScheduleOverride] = [],
         settings: VenueSettings
     ) -> String {
         let tz = settings.timeZone
@@ -64,10 +87,8 @@ enum BusinessDay {
         let today = cal(tz).startOfDay(for: now)
         let yesterday = cal(tz).date(byAdding: .day, value: -1, to: today) ?? today
 
-        let todayWd = isodow(today, tz: tz)
-        let yesterdayWd = isodow(yesterday, tz: tz)
-        let todayDay = schedule.first { $0.weekday == todayWd }
-        let yesterdayDay = schedule.first { $0.weekday == yesterdayWd }
+        let todayDay = effectiveDay(for: today, schedule: schedule, overrides: overrides, tz: tz)
+        let yesterdayDay = effectiveDay(for: yesterday, schedule: schedule, overrides: overrides, tz: tz)
 
         let grace = Int(settings.gracePeriodMinutes)
 
@@ -110,8 +131,8 @@ enum BusinessDay {
         // Case 3: we're between shifts. Walk back to find the most recent open day.
         for offset in 1...7 {
             guard let date = cal(tz).date(byAdding: .day, value: -offset, to: today) else { break }
-            let wd = isodow(date, tz: tz)
-            if let d = schedule.first(where: { $0.weekday == wd }), !d.isClosed {
+            if let d = effectiveDay(for: date, schedule: schedule, overrides: overrides, tz: tz),
+               !d.isClosed {
                 return iso(date, tz: tz)
             }
         }
@@ -124,6 +145,7 @@ enum BusinessDay {
     static func isCurrentlyOpen(
         now: Date = Date(),
         schedule: [VenueDay],
+        overrides: [VenueScheduleOverride] = [],
         settings: VenueSettings
     ) -> Bool {
         let tz = settings.timeZone
@@ -132,8 +154,7 @@ enum BusinessDay {
         let yesterday = cal(tz).date(byAdding: .day, value: -1, to: today) ?? today
 
         // Is yesterday's shift still running into today?
-        let yWd = isodow(yesterday, tz: tz)
-        if let y = schedule.first(where: { $0.weekday == yWd }),
+        if let y = effectiveDay(for: yesterday, schedule: schedule, overrides: overrides, tz: tz),
            !y.isClosed, y.closesNextCalendarDay,
            let close = y.closeTime.flatMap(TimeOfDay.minutesFromMidnight),
            nowClock < close {
@@ -141,8 +162,8 @@ enum BusinessDay {
         }
 
         // Is today's shift open now?
-        let tWd = isodow(today, tz: tz)
-        if let t = schedule.first(where: { $0.weekday == tWd }), !t.isClosed,
+        if let t = effectiveDay(for: today, schedule: schedule, overrides: overrides, tz: tz),
+           !t.isClosed,
            let open = t.openTime.flatMap(TimeOfDay.minutesFromMidnight),
            let close = t.closeTime.flatMap(TimeOfDay.minutesFromMidnight) {
             if t.closesNextCalendarDay {
@@ -155,10 +176,14 @@ enum BusinessDay {
     }
 
     /// Is the given business-day ISO date a closed day?
-    static func isClosed(dayISO: String, schedule: [VenueDay], tz: TimeZone) -> Bool {
+    static func isClosed(
+        dayISO: String,
+        schedule: [VenueDay],
+        overrides: [VenueScheduleOverride] = [],
+        tz: TimeZone
+    ) -> Bool {
         guard let date = parse(dayISO, tz: tz) else { return false }
-        let wd = isodow(date, tz: tz)
-        return schedule.first(where: { $0.weekday == wd })?.isClosed ?? false
+        return effectiveDay(for: date, schedule: schedule, overrides: overrides, tz: tz)?.isClosed ?? false
     }
 
     // MARK: - Minutes-since-business-day-start
@@ -195,20 +220,19 @@ enum BusinessDay {
     /// Minutes "now" is into the current business day.
     static func nowInBusinessDay(
         schedule: [VenueDay],
+        overrides: [VenueScheduleOverride] = [],
         settings: VenueSettings,
         now: Date = Date()
     ) -> Int {
         let tz = settings.timeZone
         let nowClockTime = clock(now, tz: tz)
-        let todayDow = isodow(now, tz: tz)
 
         // Determine which day's schedule governs us (today's or yesterday's if we're in wraparound)
         let today = cal(tz).startOfDay(for: now)
         let yesterday = cal(tz).date(byAdding: .day, value: -1, to: today) ?? today
-        let yesterdayWd = isodow(yesterday, tz: tz)
 
         // Check wraparound — are we still in yesterday's shift?
-        if let y = schedule.first(where: { $0.weekday == yesterdayWd }),
+        if let y = effectiveDay(for: yesterday, schedule: schedule, overrides: overrides, tz: tz),
            !y.isClosed, y.closesNextCalendarDay,
            let close = y.closeTime.flatMap(TimeOfDay.minutesFromMidnight),
            nowClockTime.totalMinutes < close {
@@ -218,15 +242,20 @@ enum BusinessDay {
         }
 
         // Use today's schedule
-        guard let todayDay = schedule.first(where: { $0.weekday == todayDow }) else { return 0 }
+        guard let todayDay = effectiveDay(for: today, schedule: schedule, overrides: overrides, tz: tz) else { return 0 }
         let hh = String(format: "%02d:%02d", nowClockTime.hour, nowClockTime.minute)
         return minutesIntoBusinessDay(clockTimeHHmm: hh, day: todayDay, settings: settings) ?? 0
     }
 
-    /// Find the schedule entry for a given business-day ISO date.
-    static func scheduleDay(for dayISO: String, schedule: [VenueDay], tz: TimeZone) -> VenueDay? {
+    /// Find the effective schedule entry for a given business-day ISO date,
+    /// merging any per-date override into the weekday default.
+    static func scheduleDay(
+        for dayISO: String,
+        schedule: [VenueDay],
+        overrides: [VenueScheduleOverride] = [],
+        tz: TimeZone
+    ) -> VenueDay? {
         guard let date = parse(dayISO, tz: tz) else { return nil }
-        let wd = isodow(date, tz: tz)
-        return schedule.first { $0.weekday == wd }
+        return effectiveDay(for: date, schedule: schedule, overrides: overrides, tz: tz)
     }
 }

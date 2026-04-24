@@ -28,14 +28,22 @@ struct ContentView: View {
         .onAppear {
             if taskVM == nil && venue.isLoaded {
                 taskVM = TaskViewModel(
-                    date: BusinessDay.currentBusinessDayISO(schedule: venue.schedule, settings: venue.settings)
+                    date: BusinessDay.currentBusinessDayISO(
+                        schedule: venue.schedule,
+                        overrides: venue.overrides,
+                        settings: venue.settings
+                    )
                 )
             }
         }
         .onChange(of: venue.isLoaded) { _, loaded in
             if loaded && taskVM == nil {
                 taskVM = TaskViewModel(
-                    date: BusinessDay.currentBusinessDayISO(schedule: venue.schedule, settings: venue.settings)
+                    date: BusinessDay.currentBusinessDayISO(
+                        schedule: venue.schedule,
+                        overrides: venue.overrides,
+                        settings: venue.settings
+                    )
                 )
             }
         }

@@ -52,7 +52,12 @@ struct TaskBoardView: View {
 
     /// The schedule governing this task board's business day.
     private var boardDay: VenueDay? {
-        BusinessDay.scheduleDay(for: vm.date, schedule: venue.schedule, tz: venue.settings.timeZone)
+        BusinessDay.scheduleDay(
+            for: vm.date,
+            schedule: venue.schedule,
+            overrides: venue.overrides,
+            tz: venue.settings.timeZone
+        )
     }
 
     /// Convert a task's clock-time (HH:mm:ss) to minutes into the business day.
@@ -65,7 +70,11 @@ struct TaskBoardView: View {
 
     /// "Now" in minutes into the business day governing this board.
     private var nowInBusinessDay: Int {
-        BusinessDay.nowInBusinessDay(schedule: venue.schedule, settings: venue.settings)
+        BusinessDay.nowInBusinessDay(
+            schedule: venue.schedule,
+            overrides: venue.overrides,
+            settings: venue.settings
+        )
     }
 
     /// Classify a single task into a time bucket using business-day-relative minutes.
@@ -318,33 +327,52 @@ struct TaskBoardView: View {
         .clipShape(Capsule())
     }
 
-    /// Short label + a status tint. Looked up from the venue schedule
-    /// row for TODAY'S weekday (not the board's date — status is an
-    /// always-live reading of right-now).
+    /// Short label + a status tint. Looked up from the effective
+    /// schedule (weekly default + any override) for TODAY'S date —
+    /// not the board's date — status is an always-live reading of
+    /// right-now. If today has an override with a `reason`, it's
+    /// appended to the base label ("Closed · Staff training").
     private var venueStatus: (String, Color) {
         let tz = venue.settings.timeZone
+        let todayISO = BusinessDay.iso(Date(), tz: tz)
         guard let day = BusinessDay.scheduleDay(
-            for: BusinessDay.iso(Date(), tz: tz),
+            for: todayISO,
             schedule: venue.schedule,
+            overrides: venue.overrides,
             tz: tz
         ) else {
             return (tr("status_unknown"), .gray)
         }
-        if day.isClosed {
-            return (tr("status_closed_today"), .statusPending)
-        }
-        let open = BusinessDay.isCurrentlyOpen(schedule: venue.schedule, settings: venue.settings)
-        if open {
-            if let close = day.closeTime {
-                return (String(format: tr("status_open_closes"), TimeOfDay.displayString(from: close)), .statusDone)
+
+        let base: (String, Color) = {
+            if day.isClosed {
+                return (tr("status_closed_today"), .statusPending)
             }
-            return (tr("status_open"), .statusDone)
-        } else {
+            let open = BusinessDay.isCurrentlyOpen(
+                schedule: venue.schedule,
+                overrides: venue.overrides,
+                settings: venue.settings
+            )
+            if open {
+                if let close = day.closeTime {
+                    return (String(format: tr("status_open_closes"), TimeOfDay.displayString(from: close)), .statusDone)
+                }
+                return (tr("status_open"), .statusDone)
+            }
             if let op = day.openTime {
                 return (String(format: tr("status_opens"), TimeOfDay.displayString(from: op)), .statusProgress)
             }
             return (tr("status_between_shifts"), .gray)
+        }()
+
+        // Suffix the override reason if today is overridden with a
+        // non-empty label — surfaces "why today is unusual" right in
+        // the status pill.
+        if let reason = venue.override(for: todayISO)?.reason,
+           !reason.isEmpty {
+            return ("\(base.0) · \(reason)", base.1)
         }
+        return base
     }
 
     private var businessDayHint: String {

@@ -332,7 +332,11 @@ struct TaskEditorSheet: View {
             startTime: hasStartTime ? TimeOfDay.dbString(from: startTime) : nil,
             endTime: hasEndTime ? TimeOfDay.dbString(from: endTime) : nil
         )
-        let bd = BusinessDay.currentBusinessDayISO(schedule: venue.schedule, settings: venue.settings)
+        let bd = BusinessDay.currentBusinessDayISO(
+            schedule: venue.schedule,
+            overrides: venue.overrides,
+            settings: venue.settings
+        )
         do {
             if let t = task {
                 try await adminVM.updateTask(id: t.id, newTask, businessDay: bd)
