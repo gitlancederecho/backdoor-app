@@ -182,6 +182,58 @@ inline row-menu; new delete paths should pick a `RowDeleteBehavior`
 and wire the existing toast/alert plumbing rather than inventing
 their own.
 
+## View-model mutation policy (no post-write `fetchAll`)
+
+Every mutator on `AdminViewModel` / `VenueViewModel` / `TaskViewModel`
+follows this contract:
+
+1. **Apply the local mutation up front** — remove from / append to /
+   patch the in-memory array so the UI updates the instant the user
+   acts.
+2. **Fire the DB write.**
+3. **On failure (caught), revert the local change.** Cache the prior
+   value before mutating so revert is mechanical.
+4. **Realtime brings authoritative state** within ~200ms via the
+   subscriptions wired in `start*Realtime` (commit 6728475).
+
+**Do NOT `await fetchAll()` (or `fetchFolders` / `fetchOverrides`)
+after a DB write.** That was the old pattern; it adds 200-500ms of
+perceptible lag for zero correctness benefit since realtime already
+delivers the change. The fix landed across every delete / undo /
+move path in commit 6238d69 — match that style for any new mutator.
+
+Anti-pattern (laggy):
+```swift
+func deleteThing(_ row: Thing) async throws {
+    try await supabase.from("things").delete().eq("id", value: row.id).execute()
+    await fetchAll()   // ← 200-500ms before UI updates
+}
+```
+
+Correct (snappy + correct):
+```swift
+func deleteThing(_ row: Thing) async throws {
+    let prior = things.firstIndex { $0.id == row.id }
+    if let pi = prior { things.remove(at: pi) }   // optimistic
+
+    do {
+        try await supabase.from("things").delete().eq("id", value: row.id).execute()
+    } catch {
+        if let pi = prior { things.insert(row, at: min(pi, things.count)) }
+        throw error
+    }
+}
+```
+
+For undo/restore flows, the local mutation is the inverse (re-insert
++ resort) and the same revert-on-failure rule applies. See
+`AdminViewModel.undoDeleteTask` for the canonical example.
+
+If you ever need a manual refresh path (e.g., pull-to-refresh in a
+view that's outside the realtime subscription scope), keep `fetchAll`
+public and call it explicitly — but never as a defensive trailing
+call inside a mutator.
+
 ## Gotchas hit this session
 
 - **Dict-literal duplicate keys trap at runtime.** `Localization.swift` uses `[String: String]` literals; duplicate keys crash with `Fatal error: Dictionary literal contains duplicate keys.` the first time `tr(...)` runs — often "app won't load" in practice. Before adding new keys, grep both `enStrings` and `jaStrings` for the proposed key. A full scan (it's a 500+ line file): `python3 -c "import re; b=open('backdoor-ios/.../Localization.swift').read(); …"` — pattern is in the commit `5cbc27b`.
