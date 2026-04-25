@@ -2,8 +2,7 @@ import SwiftUI
 import Supabase
 
 /// Create / rename a folder. Creation uses `folder = nil`; editing
-/// passes the existing row. Description is optional. No color picker
-/// yet — the `color` column exists for a future tint affordance.
+/// passes the existing row.
 struct FolderEditorSheet: View {
     /// nil = creating a new folder.
     var folder: TaskFolder?
@@ -13,6 +12,9 @@ struct FolderEditorSheet: View {
 
     @State private var name: String = ""
     @State private var description: String = ""
+    /// Selected hex string from the `FolderTint` palette. nil = use
+    /// the default app accent.
+    @State private var selectedColor: String?
     @State private var isSaving = false
     @State private var error: String?
 
@@ -30,6 +32,9 @@ struct FolderEditorSheet: View {
                         }
                         field(tr("folder_description")) {
                             TextField(tr("folder_description"), text: $description).inputStyle()
+                        }
+                        field(tr("color")) {
+                            colorPicker
                         }
                         if let error {
                             Text(error).font(.caption).foregroundColor(.statusPending)
@@ -58,6 +63,12 @@ struct FolderEditorSheet: View {
             if let f = folder {
                 name = f.name
                 description = f.description ?? ""
+                selectedColor = f.color
+            } else {
+                // New folder defaults to the app accent so the swatch
+                // shows a checkmark from the start (no "no color"
+                // ambiguous state).
+                selectedColor = FolderTint.gold.rawValue
             }
         }
     }
@@ -70,13 +81,48 @@ struct FolderEditorSheet: View {
         }
     }
 
+    /// Horizontal swatch picker. Each tint is a 32pt circle with a
+    /// thicker stroke when selected. Defaults to `.gold` (the app
+    /// accent) when nothing's been chosen yet.
+    private var colorPicker: some View {
+        HStack(spacing: 10) {
+            ForEach(FolderTint.allCases) { tint in
+                let isSelected = (selectedColor ?? FolderTint.gold.rawValue) == tint.rawValue
+                Button {
+                    selectedColor = tint.rawValue
+                } label: {
+                    Circle()
+                        .fill(tint.color)
+                        .frame(width: 32, height: 32)
+                        .overlay(
+                            Circle()
+                                .stroke(isSelected ? Color.white : Color.bdBorder,
+                                        lineWidth: isSelected ? 2 : 1)
+                        )
+                        .overlay {
+                            if isSelected {
+                                Image(systemName: "checkmark")
+                                    .font(.caption.weight(.bold))
+                                    .foregroundColor(.black)
+                            }
+                        }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(tint.rawValue)
+            }
+        }
+    }
+
     private func save() async {
         isSaving = true
         error = nil
         do {
             if let f = folder {
-                // Rename + description update. Description changes are
-                // part of the rename path to keep one save action.
+                // Rename + description + color update — bundled into
+                // one save action. Description / color changes pass
+                // through `TaskFolderPatch` directly since neither
+                // has the nullable-omits-on-encode trap (we always
+                // send a real String, just possibly empty).
                 try await adminVM.renameFolder(f, to: name)
                 let cleaned = description.trimmingCharacters(in: .whitespaces)
                 if cleaned != (f.description ?? "") {
@@ -86,8 +132,20 @@ struct FolderEditorSheet: View {
                         .eq("id", value: f.id)
                         .execute()
                 }
+                if selectedColor != f.color {
+                    try await supabase
+                        .from("task_folders")
+                        .update(TaskFolderPatch(color: selectedColor))
+                        .eq("id", value: f.id)
+                        .execute()
+                }
+                await adminVM.fetchAll()
             } else {
-                try await adminVM.createFolder(name: name, description: description)
+                try await adminVM.createFolder(
+                    name: name,
+                    description: description,
+                    color: selectedColor
+                )
             }
             dismiss()
         } catch {
@@ -139,7 +197,7 @@ struct MoveToFolderPicker: View {
                         } label: {
                             HStack(spacing: 10) {
                                 Image(systemName: "folder.fill")
-                                    .foregroundColor(.bdAccent)
+                                    .foregroundColor(FolderTint.color(forStored: f.color))
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(f.name).foregroundColor(.white)
                                     if let desc = f.description, !desc.isEmpty {

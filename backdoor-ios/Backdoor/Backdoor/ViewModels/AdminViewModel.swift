@@ -70,7 +70,11 @@ final class AdminViewModel {
         folders = rows
     }
 
-    func createFolder(name: String, description: String? = nil) async throws {
+    func createFolder(
+        name: String,
+        description: String? = nil,
+        color: String? = nil
+    ) async throws {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         let nextOrder = Int16(clamping: (folders.map { Int($0.sortOrder) }.max() ?? 0) + 1)
@@ -81,7 +85,7 @@ final class AdminViewModel {
         let row = NewTaskFolder(
             name: trimmed,
             description: cleanDescription,
-            color: nil,
+            color: color,
             sortOrder: nextOrder,
             createdBy: await currentStaffId()
         )

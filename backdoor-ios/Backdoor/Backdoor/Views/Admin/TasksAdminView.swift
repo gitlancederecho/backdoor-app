@@ -326,7 +326,7 @@ struct TasksAdminView: View {
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: "folder.fill")
-                    .foregroundColor(.bdAccent)
+                    .foregroundColor(FolderTint.color(forStored: folder.color))
                     .font(.system(size: 18))
                     .frame(width: 28)
                 VStack(alignment: .leading, spacing: 2) {

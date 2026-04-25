@@ -286,6 +286,12 @@ struct FolderTasksView: View {
             }
             .buttonStyle(.plain)
 
+            // Folder icon tinted to its stored color — matches the
+            // root list's folder rows and the move-picker swatch.
+            Image(systemName: "folder.fill")
+                .foregroundColor(FolderTint.color(forStored: folder.color))
+                .font(.system(size: 18))
+
             VStack(alignment: .leading, spacing: 2) {
                 Text(folder.name)
                     .font(.title3.bold())
