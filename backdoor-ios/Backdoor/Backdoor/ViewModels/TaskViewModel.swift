@@ -427,6 +427,30 @@ final class TaskViewModel {
             .eq("id", value: id)
             .execute()
     }
+
+    /// Update a comment's body. Server-side trigger touches
+    /// `edited_at` whenever the body changed, which the UI reads
+    /// to render the "edited" tag next to the timestamp.
+    func updateComment(id: UUID, body: String) async throws -> TaskComment {
+        let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw NSError(
+                domain: "Backdoor.TaskViewModel",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "Comment body is empty"]
+            )
+        }
+        struct Patch: Encodable { let body: String }
+        let updated: TaskComment = try await supabase
+            .from("task_comments")
+            .update(Patch(body: trimmed))
+            .eq("id", value: id)
+            .select("*, author:staff!task_comments_author_id_fkey(*)")
+            .single()
+            .execute()
+            .value
+        return updated
+    }
 }
 
 // MARK: - Photo upload

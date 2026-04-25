@@ -39,6 +39,15 @@ struct TaskCompletionSheet: View {
     /// policy. Set from the comment row's ⋯ menu; cleared when the
     /// alert resolves.
     @State private var pendingCommentDelete: TaskComment?
+    /// Inline comment edit state — set from the row's ⋯ menu; the
+    /// row swaps its `Text(body)` for a `TextField` bound to
+    /// `editingCommentDraft` while this is non-nil for that row.
+    /// The DB trigger on `task_comments.edited_at` stamps the row
+    /// when the body changes, which the UI reads to show the
+    /// "edited" tag.
+    @State private var editingCommentId: UUID?
+    @State private var editingCommentDraft: String = ""
+    @State private var isSavingCommentEdit = false
 
     /// Live view of the task — re-reads from the VM each access so
     /// optimistic updates (reassign, complete, undo, note edits)
@@ -436,6 +445,7 @@ struct TaskCompletionSheet: View {
     @ViewBuilder
     private func commentRow(_ c: TaskComment) -> some View {
         let isOwn = c.authorId != nil && c.authorId == auth.staff?.id
+        let isEditingThis = editingCommentId == c.id
         HStack(alignment: .top, spacing: 10) {
             AvatarView(initials: c.author?.initials ?? "?", url: c.author?.avatarUrl, size: 28)
                 .staffProfileLink(c.author)
@@ -454,8 +464,18 @@ struct TaskCompletionSheet: View {
                             .foregroundColor(.gray)
                     }
                     Spacer()
-                    if isOwn || auth.isAdmin {
+                    if (isOwn || auth.isAdmin) && !isEditingThis {
                         RowMenu(
+                            actions: [
+                                // Edit only allowed for the author —
+                                // admins can delete any comment, but
+                                // editing someone else's words crosses
+                                // a line. Hide rather than show + warn.
+                                .edit(isVisible: isOwn) {
+                                    editingCommentId = c.id
+                                    editingCommentDraft = c.body
+                                }
+                            ],
                             delete: RowDelete(
                                 behavior: .hard(titleKey: "delete_comment_confirm"),
                                 perform: { Task { await deleteComment(c) } }
@@ -471,15 +491,75 @@ struct TaskCompletionSheet: View {
                         )
                     }
                 }
-                Text(c.body)
-                    .font(.subheadline)
-                    .foregroundColor(.white)
-                    .fixedSize(horizontal: false, vertical: true)
+
+                if isEditingThis {
+                    // Inline edit affordance — TextField for the
+                    // body, Save / Cancel buttons. The DB trigger
+                    // bumps `edited_at` on body change so the row
+                    // re-renders with the "edited" tag once we
+                    // refetch.
+                    TextField("", text: $editingCommentDraft, axis: .vertical)
+                        .font(.subheadline)
+                        .foregroundColor(.white)
+                        .lineLimit(1...6)
+                        .padding(8)
+                        .background(Color.bgElevated)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(Color.bdBorder, lineWidth: 1)
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    HStack(spacing: 12) {
+                        Spacer()
+                        Button(tr("cancel")) {
+                            editingCommentId = nil
+                            editingCommentDraft = ""
+                        }
+                        .font(.caption.weight(.medium))
+                        .foregroundColor(.gray)
+                        .buttonStyle(.borderless)
+                        Button(tr("save")) {
+                            Task { await saveCommentEdit(c) }
+                        }
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.bdAccent)
+                        .buttonStyle(.borderless)
+                        .disabled(
+                            isSavingCommentEdit ||
+                            editingCommentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                            editingCommentDraft == c.body
+                        )
+                    }
+                } else {
+                    Text(c.body)
+                        .font(.subheadline)
+                        .foregroundColor(.white)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
         .padding(10)
         .background(Color.bgElevated.opacity(0.5))
         .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func saveCommentEdit(_ c: TaskComment) async {
+        guard editingCommentDraft != c.body else {
+            editingCommentId = nil
+            return
+        }
+        isSavingCommentEdit = true
+        do {
+            let updated = try await taskVM.updateComment(id: c.id, body: editingCommentDraft)
+            if let idx = comments.firstIndex(where: { $0.id == c.id }) {
+                comments[idx] = updated
+            }
+            editingCommentId = nil
+            editingCommentDraft = ""
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        isSavingCommentEdit = false
     }
 
     private func loadComments() async {
