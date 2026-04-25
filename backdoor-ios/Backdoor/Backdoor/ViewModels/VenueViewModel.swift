@@ -13,8 +13,59 @@ final class VenueViewModel {
     var overrides: [VenueScheduleOverride] = []
     var isLoaded = false
 
+    /// Realtime plumbing — covers `venue_settings`, `venue_schedule`,
+    /// and `venue_schedule_override`. Any change refreshes the whole
+    /// VM via `load`. Topic includes a UUID for the same channel-
+    /// caching reason as `AdminViewModel.startRealtime`.
+    private var realtimeTask: Task<Void, Never>?
+    private var realtimeChannel: RealtimeChannelV2?
+
     init() {
-        Task { await load() }
+        Task {
+            await load()
+            await startRealtime()
+        }
+    }
+
+    private func startRealtime() async {
+        await stopRealtime()
+        let channel = supabase.channel("venue_observer_\(UUID().uuidString.prefix(8))")
+        let settingsStream  = channel.postgresChange(AnyAction.self, schema: "public", table: "venue_settings")
+        let scheduleStream  = channel.postgresChange(AnyAction.self, schema: "public", table: "venue_schedule")
+        let overridesStream = channel.postgresChange(AnyAction.self, schema: "public", table: "venue_schedule_override")
+        try? await channel.subscribeWithError()
+        realtimeChannel = channel
+        realtimeTask = Task { [weak self] in
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask { [weak self] in
+                    for await _ in settingsStream {
+                        guard !Task.isCancelled else { break }
+                        await self?.load()
+                    }
+                }
+                group.addTask { [weak self] in
+                    for await _ in scheduleStream {
+                        guard !Task.isCancelled else { break }
+                        await self?.load()
+                    }
+                }
+                group.addTask { [weak self] in
+                    for await _ in overridesStream {
+                        guard !Task.isCancelled else { break }
+                        await self?.fetchOverrides()
+                    }
+                }
+            }
+        }
+    }
+
+    private func stopRealtime() async {
+        realtimeTask?.cancel()
+        realtimeTask = nil
+        if let ch = realtimeChannel {
+            await supabase.removeChannel(ch)
+            realtimeChannel = nil
+        }
     }
 
     func load() async {

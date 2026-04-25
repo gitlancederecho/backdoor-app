@@ -15,8 +15,69 @@ final class AdminViewModel {
     var folders: [TaskFolder] = []
     var isLoading = false
 
+    /// Realtime plumbing — covers `tasks`, `task_folders`, `staff`,
+    /// and `categories`. Any change to any of those refreshes the
+    /// whole VM via `fetchAll`. Could be more surgical, but admin
+    /// surfaces are cheap to refetch and this keeps the wiring
+    /// trivial. Topic includes a UUID so re-presenting the Admin
+    /// tab gets a fresh channel binding (see CLAUDE.md gotcha:
+    /// Supabase Swift caches channels by topic name).
+    private var realtimeTask: Task<Void, Never>?
+    private var realtimeChannel: RealtimeChannelV2?
+
     init() {
-        Task { await fetchAll() }
+        Task {
+            await fetchAll()
+            await startRealtime()
+        }
+    }
+
+    private func startRealtime() async {
+        await stopRealtime()
+        let channel = supabase.channel("admin_observer_\(UUID().uuidString.prefix(8))")
+        let tasksStream    = channel.postgresChange(AnyAction.self, schema: "public", table: "tasks")
+        let foldersStream  = channel.postgresChange(AnyAction.self, schema: "public", table: "task_folders")
+        let staffStream    = channel.postgresChange(AnyAction.self, schema: "public", table: "staff")
+        let categoriesStream = channel.postgresChange(AnyAction.self, schema: "public", table: "categories")
+        try? await channel.subscribeWithError()
+        realtimeChannel = channel
+        realtimeTask = Task { [weak self] in
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask { [weak self] in
+                    for await _ in tasksStream {
+                        guard !Task.isCancelled else { break }
+                        await self?.fetchAll()
+                    }
+                }
+                group.addTask { [weak self] in
+                    for await _ in foldersStream {
+                        guard !Task.isCancelled else { break }
+                        await self?.fetchAll()
+                    }
+                }
+                group.addTask { [weak self] in
+                    for await _ in staffStream {
+                        guard !Task.isCancelled else { break }
+                        await self?.fetchAll()
+                    }
+                }
+                group.addTask { [weak self] in
+                    for await _ in categoriesStream {
+                        guard !Task.isCancelled else { break }
+                        await self?.fetchAll()
+                    }
+                }
+            }
+        }
+    }
+
+    private func stopRealtime() async {
+        realtimeTask?.cancel()
+        realtimeTask = nil
+        if let ch = realtimeChannel {
+            await supabase.removeChannel(ch)
+            realtimeChannel = nil
+        }
     }
 
     func fetchAll() async {
