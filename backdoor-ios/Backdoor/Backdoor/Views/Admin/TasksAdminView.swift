@@ -417,16 +417,20 @@ struct TasksAdminView: View {
         // If another toast was up, dismiss its timer before firing a new delete.
         undoDismissTask?.cancel()
 
-        Task {
-            try? await adminVM.deleteTask(task)
-            pendingUndo = task
-            // Schedule auto-dismiss after the undo window.
-            undoDismissTask = Task {
-                try? await Task.sleep(for: undoWindow)
-                guard !Task.isCancelled else { return }
-                pendingUndo = nil
-            }
+        // Pop the toast immediately so swipe-delete feels instant —
+        // waiting for the DB roundtrip first introduced a 200-500ms
+        // gap between the row vanishing and the undo affordance
+        // appearing. The actual delete fires in parallel; realtime
+        // (or the fetchAll inside deleteTask) takes the row out of
+        // the list when the server confirms.
+        pendingUndo = task
+        undoDismissTask = Task {
+            try? await Task.sleep(for: undoWindow)
+            guard !Task.isCancelled else { return }
+            pendingUndo = nil
         }
+
+        Task { try? await adminVM.deleteTask(task) }
     }
 
     private func handleUndo(_ task: TaskTemplate) {

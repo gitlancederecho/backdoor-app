@@ -243,15 +243,16 @@ struct FolderTasksView: View {
 
     private func handleDelete(_ task: TaskTemplate) {
         undoDismissTask?.cancel()
-        Task {
-            try? await adminVM.deleteTask(task)
-            pendingUndo = task
-            undoDismissTask = Task {
-                try? await Task.sleep(for: undoWindow)
-                guard !Task.isCancelled else { return }
-                pendingUndo = nil
-            }
+        // Show the toast first; fire the delete in the background so
+        // swipe-delete feels instant. Mirrors the TasksAdminView root
+        // pattern exactly.
+        pendingUndo = task
+        undoDismissTask = Task {
+            try? await Task.sleep(for: undoWindow)
+            guard !Task.isCancelled else { return }
+            pendingUndo = nil
         }
+        Task { try? await adminVM.deleteTask(task) }
     }
 
     private func handleUndo(_ task: TaskTemplate) {
