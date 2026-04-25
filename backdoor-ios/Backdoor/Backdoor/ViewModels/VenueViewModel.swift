@@ -159,12 +159,28 @@ final class VenueViewModel {
     }
 
     func deleteOverride(date: String) async throws {
-        try await supabase
-            .from("venue_schedule_override")
-            .delete()
-            .eq("date", value: date)
-            .execute()
-        await fetchOverrides()
+        // Optimistic: drop locally so the row vanishes the instant
+        // the user confirms. The realtime subscription on
+        // `venue_schedule_override` (wired in init) will refresh
+        // ~200ms later. On server reject we put it back.
+        let prior = overrides.first { $0.date == date }
+        let priorIndex = overrides.firstIndex { $0.date == date }
+        if let pi = priorIndex {
+            overrides.remove(at: pi)
+        }
+
+        do {
+            try await supabase
+                .from("venue_schedule_override")
+                .delete()
+                .eq("date", value: date)
+                .execute()
+        } catch {
+            if let pi = priorIndex, let ov = prior {
+                overrides.insert(ov, at: min(pi, overrides.count))
+            }
+            throw error
+        }
     }
 
     // MARK: - Defaults

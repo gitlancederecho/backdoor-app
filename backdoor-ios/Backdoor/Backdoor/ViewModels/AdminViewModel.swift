@@ -122,6 +122,26 @@ final class AdminViewModel {
         isLoading = false
     }
 
+    /// Re-sort `taskTemplates` to match the canonical query order
+    /// (`sort_order ASC NULLS LAST, created_at DESC`). Used after
+    /// optimistic local mutations that re-add a row — keeps the
+    /// list stable until the next realtime refresh confirms.
+    private func sortTaskTemplates() {
+        taskTemplates.sort { lhs, rhs in
+            switch (lhs.sortOrder, rhs.sortOrder) {
+            case (let l?, let r?):
+                if l != r { return l < r }
+                return lhs.createdAt > rhs.createdAt
+            case (.some, .none):
+                return true
+            case (.none, .some):
+                return false
+            case (.none, .none):
+                return lhs.createdAt > rhs.createdAt
+            }
+        }
+    }
+
     // MARK: - Folder CRUD
 
     private func fetchFolders() async {
@@ -184,19 +204,44 @@ final class AdminViewModel {
                 try c.encode(folderId, forKey: .folderId)
             }
         }
+
+        // Optimistic: drop the folder + null member-task folderIds
+        // locally so the UI updates immediately. Cache the priors so
+        // we can revert if the folder write fails.
+        let priorMembers = taskTemplates
+            .enumerated()
+            .filter { _, t in t.folderId == folder.id }
+            .map { ($0.offset, $0.element.folderId) }
+        for (idx, _) in priorMembers {
+            taskTemplates[idx].folderId = nil
+        }
+        let priorFolderIndex = folders.firstIndex { $0.id == folder.id }
+        if let pi = priorFolderIndex {
+            folders.remove(at: pi)
+        }
+
         _ = try? await supabase
             .from("tasks")
             .update(Patch(folderId: nil))
             .eq("folder_id", value: folder.id)
             .execute()
 
-        try await supabase
-            .from("task_folders")
-            .update(TaskFolderPatch(isActive: false))
-            .eq("id", value: folder.id)
-            .execute()
-        await fetchFolders()
-        await fetchAll()  // tasks' folder_id changed, reload
+        do {
+            try await supabase
+                .from("task_folders")
+                .update(TaskFolderPatch(isActive: false))
+                .eq("id", value: folder.id)
+                .execute()
+        } catch {
+            // Revert: restore folder + member task folderIds.
+            if let pi = priorFolderIndex {
+                folders.insert(folder, at: min(pi, folders.count))
+            }
+            for (idx, prior) in priorMembers where idx < taskTemplates.count {
+                taskTemplates[idx].folderId = prior
+            }
+            throw error
+        }
     }
 
     /// Soft-delete a folder *and* every template inside it. Preferred
@@ -206,17 +251,31 @@ final class AdminViewModel {
     /// deletes — admins can still find + restore a specific one via
     /// the Deleted tasks sheet).
     func deleteFolderAndTasks(_ folder: TaskFolder) async throws {
+        // `deleteTask` is now optimistic; calling it per member
+        // strips them from `taskTemplates` instantly.
         let members = taskTemplates.filter { $0.folderId == folder.id }
         for t in members {
             try? await deleteTask(t)
         }
-        try await supabase
-            .from("task_folders")
-            .update(TaskFolderPatch(isActive: false))
-            .eq("id", value: folder.id)
-            .execute()
-        await fetchFolders()
-        await fetchAll()
+
+        // Drop the folder locally as well, then push the soft-delete.
+        let priorIndex = folders.firstIndex { $0.id == folder.id }
+        if let pi = priorIndex {
+            folders.remove(at: pi)
+        }
+
+        do {
+            try await supabase
+                .from("task_folders")
+                .update(TaskFolderPatch(isActive: false))
+                .eq("id", value: folder.id)
+                .execute()
+        } catch {
+            if let pi = priorIndex {
+                folders.insert(folder, at: min(pi, folders.count))
+            }
+            throw error
+        }
     }
 
     /// Persist the current `folders` order.
@@ -265,12 +324,26 @@ final class AdminViewModel {
                 try c.encode(folderId, forKey: .folderId)
             }
         }
-        try await supabase
-            .from("tasks")
-            .update(Patch(folderId: folderId))
-            .eq("id", value: task.id)
-            .execute()
-        await fetchAll()
+        // Optimistic: flip the local row's folderId so it visibly
+        // jumps sections immediately. Realtime corroborates.
+        let priorFolderId = task.folderId
+        if let idx = taskTemplates.firstIndex(where: { $0.id == task.id }) {
+            taskTemplates[idx].folderId = folderId
+        }
+
+        do {
+            try await supabase
+                .from("tasks")
+                .update(Patch(folderId: folderId))
+                .eq("id", value: task.id)
+                .execute()
+        } catch {
+            // Revert if the server rejected the move.
+            if let idx = taskTemplates.firstIndex(where: { $0.id == task.id }) {
+                taskTemplates[idx].folderId = priorFolderId
+            }
+            throw error
+        }
     }
 
     /// Bulk-move: reassign `folder_id` on every task in `ids` in a
@@ -284,12 +357,29 @@ final class AdminViewModel {
                 try c.encode(folderId, forKey: .folderId)
             }
         }
-        _ = try? await supabase
-            .from("tasks")
-            .update(Patch(folderId: folderId))
-            .in("id", values: ids)
-            .execute()
-        await fetchAll()
+        // Optimistic: flip every targeted row locally, remembering
+        // the prior values so we can revert on a server reject.
+        var priors: [UUID: UUID?] = [:]
+        for id in ids {
+            if let idx = taskTemplates.firstIndex(where: { $0.id == id }) {
+                priors[id] = taskTemplates[idx].folderId
+                taskTemplates[idx].folderId = folderId
+            }
+        }
+
+        do {
+            try await supabase
+                .from("tasks")
+                .update(Patch(folderId: folderId))
+                .in("id", values: ids)
+                .execute()
+        } catch {
+            for (id, prior) in priors {
+                if let idx = taskTemplates.firstIndex(where: { $0.id == id }) {
+                    taskTemplates[idx].folderId = prior
+                }
+            }
+        }
     }
 
     /// How many *active* templates currently live in a given folder.
@@ -345,12 +435,27 @@ final class AdminViewModel {
         // No FK cascade — tasks using this key keep it and render via
         // CategoryDisplay's humanize fallback until an admin repoints
         // them or re-creates the category.
-        try await supabase
-            .from("categories")
-            .delete()
-            .eq("key", value: key)
-            .execute()
-        await fetchCategories()
+        //
+        // Optimistic: drop the row locally so the list responds the
+        // moment the alert resolves.
+        let prior = categories.first { $0.key == key }
+        let priorIndex = categories.firstIndex { $0.key == key }
+        if let pi = priorIndex {
+            categories.remove(at: pi)
+        }
+
+        do {
+            try await supabase
+                .from("categories")
+                .delete()
+                .eq("key", value: key)
+                .execute()
+        } catch {
+            if let pi = priorIndex, let cat = prior {
+                categories.insert(cat, at: min(pi, categories.count))
+            }
+            throw error
+        }
     }
 
     /// How many templates currently reference a given category key.
@@ -536,8 +641,14 @@ final class AdminViewModel {
     /// and `note = templateTitle` so History can render without needing
     /// to join back through a (now potentially missing) daily_task.
     func deleteTask(_ template: TaskTemplate) async throws {
-        let actor = await currentStaffId()
+        // Optimistic: drop the row locally so the list updates the
+        // moment the user taps. The realtime subscription on `tasks`
+        // (wired on init) will deliver the same change ~200ms later
+        // and run a fetchAll to converge — same set of rows we
+        // already have, so no flicker.
+        taskTemplates.removeAll { $0.id == template.id }
 
+        let actor = await currentStaffId()
         let event = NewTaskEvent(
             dailyTaskId: nil,
             actorId: actor,
@@ -549,24 +660,45 @@ final class AdminViewModel {
         )
         _ = try? await supabase.from("task_events").insert(event).execute()
 
-        try await supabase
-            .from("tasks")
-            .update(["is_active": false])
-            .eq("id", value: template.id)
-            .execute()
-        await fetchAll()
+        do {
+            try await supabase
+                .from("tasks")
+                .update(["is_active": false])
+                .eq("id", value: template.id)
+                .execute()
+        } catch {
+            // Server rejected — restore the optimistic remove so the
+            // local view doesn't lie about state.
+            if !taskTemplates.contains(where: { $0.id == template.id }) {
+                taskTemplates.append(template)
+                sortTaskTemplates()
+            }
+            throw error
+        }
     }
 
     /// Reverse a soft-delete. Sets `is_active = true` and logs a
     /// matching `undone` template-level event.
     func undoDeleteTask(_ template: TaskTemplate) async throws {
-        let actor = await currentStaffId()
+        // Optimistic: re-insert immediately so the row reappears the
+        // moment the user taps Undo.
+        if !taskTemplates.contains(where: { $0.id == template.id }) {
+            taskTemplates.append(template)
+            sortTaskTemplates()
+        }
 
-        try await supabase
-            .from("tasks")
-            .update(["is_active": true])
-            .eq("id", value: template.id)
-            .execute()
+        let actor = await currentStaffId()
+        do {
+            try await supabase
+                .from("tasks")
+                .update(["is_active": true])
+                .eq("id", value: template.id)
+                .execute()
+        } catch {
+            // Restore failed — drop the optimistic insert.
+            taskTemplates.removeAll { $0.id == template.id }
+            throw error
+        }
 
         let event = NewTaskEvent(
             dailyTaskId: nil,
@@ -578,8 +710,6 @@ final class AdminViewModel {
             photoUrl: nil
         )
         _ = try? await supabase.from("task_events").insert(event).execute()
-
-        await fetchAll()
     }
 
     // MARK: - Staff
