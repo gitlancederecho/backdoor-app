@@ -416,7 +416,8 @@ struct FolderTasksView: View {
                         onMove: {
                             singleMoveTask = task
                             showingSingleMoveTarget = true
-                        }
+                        },
+                        onLongPress: { enterEditMode(preselect: task.id) }
                     )
                     .tag(task.id)
                     .listRowBackground(Color.clear)
@@ -428,11 +429,25 @@ struct FolderTasksView: View {
                         } label: { Label(tr("delete"), systemImage: "trash") }
                     }
                 }
+                .onMove { offsets, destination in
+                    var slice = folderTasks
+                    slice.move(fromOffsets: offsets, toOffset: destination)
+                    Task { await adminVM.persistTaskOrder(slice) }
+                }
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .background(Color.bgPrimary)
             .environment(\.editMode, $editMode)
+        }
+    }
+
+    /// Same hold-to-select gesture as `TasksAdminView`: long press
+    /// pops into edit mode with that row preselected.
+    private func enterEditMode(preselect id: UUID) {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            editMode = .active
+            selectedIds = [id]
         }
     }
 

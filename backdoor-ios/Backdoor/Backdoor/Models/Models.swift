@@ -156,6 +156,10 @@ struct TaskTemplate: Codable, Identifiable {
     /// `generate_daily_tasks` stops materializing rows for dates
     /// after the cutoff. nil = runs indefinitely.
     var recurrenceEndsOn: String?
+    /// Admin-assigned display position. nil = "fall back to created_at
+    /// desc." Drag-to-reorder writes a non-null value; new tasks
+    /// inherit nil so they pop in at the top by recency.
+    var sortOrder: Int?
     let createdAt: Date
 }
 

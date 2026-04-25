@@ -49,6 +49,11 @@ alter table tasks add column if not exists end_time time;
 -- (legacy behavior). `generate_daily_tasks` skips the template once
 -- target_date is past this cutoff.
 alter table tasks add column if not exists recurrence_ends_on date;
+-- Optional explicit ordering for admin display. Nullable so legacy
+-- rows fall back to "newest first" (created_at desc). Drag-to-reorder
+-- in Admin → Tasks writes a non-null value.
+alter table tasks add column if not exists sort_order int;
+create index if not exists tasks_sort_order_idx on tasks(sort_order);
 
 create table if not exists daily_tasks (
   id uuid primary key default gen_random_uuid(),

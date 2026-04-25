@@ -233,36 +233,12 @@ struct TasksAdminView: View {
         }
     }
 
-    /// Root list: Unfiled tasks (section, filterable) at the top,
-    /// Folders list beneath. Drill-in via tap → `currentFolder = folder`.
+    /// Root list: Folders first (admin's mental "albums"), Unfiled
+    /// tasks below. Both sections support drag-to-reorder in edit
+    /// mode, and a long-press anywhere on a task row enters edit
+    /// mode with that row pre-selected.
     private var rootList: some View {
         List(selection: $selectedIds) {
-            if !filteredTemplates.isEmpty {
-                Section {
-                    ForEach(filteredTemplates) { task in
-                        TaskTemplateRow(
-                            task: task,
-                            categories: adminVM.categories,
-                            allStaff: adminVM.allStaff,
-                            isEditing: editMode.isEditing,
-                            onEdit: { editingTask = task },
-                            onDelete: { handleDelete(task) }
-                        )
-                        .tag(task.id)
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
-                        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
-                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                            Button(role: .destructive) { handleDelete(task) } label: {
-                                Label(tr("delete"), systemImage: "trash")
-                            }
-                        }
-                    }
-                } header: {
-                    sectionHeader(tr("unfiled"))
-                }
-            }
-
             if !adminVM.folders.isEmpty {
                 Section {
                     ForEach(adminVM.folders) { folder in
@@ -284,6 +260,42 @@ struct TasksAdminView: View {
                     }
                 } header: {
                     sectionHeader(tr("folders"))
+                }
+            }
+
+            if !filteredTemplates.isEmpty {
+                Section {
+                    ForEach(filteredTemplates) { task in
+                        TaskTemplateRow(
+                            task: task,
+                            categories: adminVM.categories,
+                            allStaff: adminVM.allStaff,
+                            isEditing: editMode.isEditing,
+                            onEdit: { editingTask = task },
+                            onDelete: { handleDelete(task) },
+                            onLongPress: { enterEditMode(preselect: task.id) }
+                        )
+                        .tag(task.id)
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button(role: .destructive) { handleDelete(task) } label: {
+                                Label(tr("delete"), systemImage: "trash")
+                            }
+                        }
+                    }
+                    .onMove { offsets, destination in
+                        // The unfiled-section reorder mutates a slice
+                        // (only `folder_id == nil` rows). Compute the
+                        // post-move slice and write back sort_order
+                        // for those rows; other tasks are untouched.
+                        var slice = filteredTemplates
+                        slice.move(fromOffsets: offsets, toOffset: destination)
+                        Task { await adminVM.persistTaskOrder(slice) }
+                    }
+                } header: {
+                    sectionHeader(tr("unfiled"))
                 }
             }
 
@@ -390,6 +402,15 @@ struct TasksAdminView: View {
         .padding(.vertical, 12)
         .background(Color.bgCard)
         .overlay(Rectangle().frame(height: 1).foregroundColor(Color.bdBorder), alignment: .top)
+    }
+
+    /// Pop into edit mode with the long-pressed row pre-selected.
+    /// Mirrors the iOS Photos / Mail bulk-select gesture.
+    private func enterEditMode(preselect id: UUID) {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            editMode = .active
+            selectedIds = [id]
+        }
     }
 
     // MARK: - Delete / undo wiring
@@ -581,6 +602,10 @@ struct TaskTemplateRow: View {
     /// picker; inside a folder, caller also passes a move action so
     /// admins can move single tasks without entering edit mode).
     var onMove: (() -> Void)? = nil
+    /// Long-press anywhere on the row body fires this — the host
+    /// uses it to flip into edit mode and preselect this row.
+    /// Suppressed while already editing.
+    var onLongPress: (() -> Void)? = nil
     @Environment(LanguageManager.self) private var lang
 
     private var displayTitle: String {
@@ -703,5 +728,15 @@ struct TaskTemplateRow: View {
         }
         .padding(14)
         .cardStyle()
+        // Long-press anywhere on the visible card to enter edit mode
+        // and preselect this row. `.contentShape` ensures the whole
+        // padded card area is hit-testable (not just the inner
+        // HStack). Suppressed when already editing — the List
+        // handles tap-to-toggle in that mode.
+        .contentShape(Rectangle())
+        .onLongPressGesture(minimumDuration: 0.4) {
+            guard !isEditing else { return }
+            onLongPress?()
+        }
     }
 }

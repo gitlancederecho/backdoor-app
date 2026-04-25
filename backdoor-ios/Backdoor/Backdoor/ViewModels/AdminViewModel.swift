@@ -90,11 +90,15 @@ final class AdminViewModel {
             .value) ?? []
         // Non-recurring templates auto-soft-delete on final completion
         // (handled in TaskViewModel), so `is_active = true` alone now
-        // gives us the set of "templates still worth managing."
+        // gives us the set of "templates still worth managing." Order
+        // by sort_order first (admin drag-to-reorder), nulls last,
+        // tiebreak by created_at desc so brand-new rows still pop in
+        // at the top by recency until they're explicitly reordered.
         async let tasksResult: [TaskTemplate] = (try? supabase
             .from("tasks")
             .select()
             .eq("is_active", value: true)
+            .order("sort_order", ascending: true, nullsFirst: false)
             .order("created_at", ascending: false)
             .execute()
             .value) ?? []
@@ -292,6 +296,33 @@ final class AdminViewModel {
     /// Used for the "5 tasks" count on the folder row in Admin → Tasks.
     func taskCount(inFolder folderId: UUID?) -> Int {
         taskTemplates.filter { $0.folderId == folderId }.count
+    }
+
+    /// Persist a new ordering for a list of templates — typically the
+    /// Unfiled section or a single folder's tasks. Writes 1-based
+    /// `sort_order` values per row. Caller mutates the in-memory
+    /// `taskTemplates` first for snappy feedback; this fires the
+    /// writes in parallel and refetches when done.
+    func persistTaskOrder(_ ordered: [TaskTemplate]) async {
+        struct Patch: Encodable {
+            let sortOrder: Int?
+            enum CodingKeys: String, CodingKey { case sortOrder = "sort_order" }
+            func encode(to encoder: Encoder) throws {
+                var c = encoder.container(keyedBy: CodingKeys.self)
+                try c.encode(sortOrder, forKey: .sortOrder)
+            }
+        }
+        for (index, t) in ordered.enumerated() {
+            let desired = index + 1
+            if t.sortOrder != desired {
+                _ = try? await supabase
+                    .from("tasks")
+                    .update(Patch(sortOrder: desired))
+                    .eq("id", value: t.id)
+                    .execute()
+            }
+        }
+        await fetchAll()
     }
 
     // MARK: - Category CRUD
