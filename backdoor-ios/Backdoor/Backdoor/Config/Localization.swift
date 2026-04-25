@@ -301,6 +301,7 @@ private let enStrings: [String: String] = [
     "created_meta": "Created %@",
     "recurrence_ends": "Ends on a date",
     "recurrence_end_date": "End date",
+    "recurrence_ended_badge": "Ended",
 
     "admin_categories": "Categories",
     "categories_hint": "Rename, reorder, or delete task categories. Built-in categories can be renamed but not deleted.",
@@ -620,6 +621,7 @@ private let jaStrings: [String: String] = [
     "created_meta": "作成日 %@",
     "recurrence_ends": "終了日を設定",
     "recurrence_end_date": "終了日",
+    "recurrence_ended_badge": "終了",
 
     "admin_categories": "カテゴリ",
     "categories_hint": "タスクのカテゴリを名前変更・並べ替え・削除できます。組み込みカテゴリは名前変更のみ可能です。",

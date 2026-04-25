@@ -272,6 +272,16 @@ struct TasksAdminView: View {
                             .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
                             .selectionDisabled()
                     }
+                    .onMove { offsets, destination in
+                        // Reorder the in-memory list immediately so the
+                        // drag feels responsive, then persist the new
+                        // sort_order to the DB. `persistFolderOrder`
+                        // re-fetches afterwards so timestamps match.
+                        var reordered = adminVM.folders
+                        reordered.move(fromOffsets: offsets, toOffset: destination)
+                        adminVM.folders = reordered
+                        Task { await adminVM.persistFolderOrder() }
+                    }
                 } header: {
                     sectionHeader(tr("folders"))
                 }
@@ -594,6 +604,25 @@ struct TaskTemplateRow: View {
         }
     }
 
+    /// True when this template's recurrence cutoff is in the past —
+    /// `generate_daily_tasks` no longer materializes new instances
+    /// from it. The row stays visible (admin can still see it,
+    /// extend the date, or delete it) but is rendered muted with an
+    /// "Ended" badge so the silence isn't mysterious.
+    private var hasEndedRecurrence: Bool {
+        guard task.isRecurring, let isoEnd = task.recurrenceEndsOn else { return false }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        guard let endDate = f.date(from: isoEnd) else { return false }
+        // Compare dates only (no time-of-day) so a cutoff today still
+        // counts as "active today, ends tonight" rather than already
+        // ended.
+        let today = Calendar.current.startOfDay(for: Date())
+        let end = Calendar.current.startOfDay(for: endDate)
+        return end < today
+    }
+
     /// "by Alice · 3 weeks ago" — shown as a muted footer on the row.
     /// Returns nil when neither createdBy nor createdAt resolve to
     /// something useful (shouldn't happen for real data, but tests
@@ -617,9 +646,20 @@ struct TaskTemplateRow: View {
         let _ = lang.current
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(displayTitle)
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundColor(.white)
+                HStack(spacing: 6) {
+                    Text(displayTitle)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundColor(.white)
+                    if hasEndedRecurrence {
+                        Text(tr("recurrence_ended_badge"))
+                            .font(.caption2.weight(.semibold))
+                            .foregroundColor(.gray)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(Color.bgElevated)
+                            .overlay(Capsule().stroke(Color.bdBorder))
+                            .clipShape(Capsule())
+                    }
+                }
                 HStack(spacing: 4) {
                     Text(CategoryDisplay.localized(task.category, in: categories))
                     Text("·")
@@ -638,6 +678,7 @@ struct TaskTemplateRow: View {
                         .foregroundColor(.gray.opacity(0.7))
                 }
             }
+            .opacity(hasEndedRecurrence ? 0.6 : 1)
             Spacer()
             if !isEditing {
                 // The host's `onDelete` is a closure that performs the
