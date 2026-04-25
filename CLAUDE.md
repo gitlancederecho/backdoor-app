@@ -182,6 +182,104 @@ inline row-menu; new delete paths should pick a `RowDeleteBehavior`
 and wire the existing toast/alert plumbing rather than inventing
 their own.
 
+## Roadmap
+
+The app is pivoting from "task management for one bar" toward a
+multi-venue staff-engagement product with a portable user reputation.
+The pitch: easier mgmt for venues, more motivated workers, easier to
+spot reliable staff when hiring across venues. Three staged phases
+deliberately scoped so each ships independently.
+
+### Phase 1 — Reputation layer (single-venue, builds on current code)
+
+Trust score on each Profile, with visible inputs the user understands.
+Stays inside the existing single-venue schema; no multi-tenant work
+yet. Concrete deliverables:
+
+- **Trust score** — scalar 0-100 surfaced on the existing Profile +
+  StaffProfileView. Inputs visible right under the score:
+  - On-time completion % (window from `tasks.start_time` /
+    `tasks.end_time` vs `daily_tasks.completed_at`)
+  - Current + longest streak (consecutive business days completing
+    every assigned task)
+  - Photo-proof rate (% of completions that included a photo)
+  - Manager kudos count
+- **Manager kudos** — new `task_kudos` table:
+  - `daily_task_id uuid not null fk → daily_tasks(id) on delete cascade`
+  - `actor_id uuid not null fk → staff(id)` (must be admin)
+  - `created_at timestamptz default now()`
+  - `unique(daily_task_id, actor_id)` — one heart per admin per task
+  - RLS: read by authenticated, write by admin only
+  - Realtime publication
+  - UI: a kudos button on the completed-task row in
+    `TaskCompletionSheet` (only visible when `auth.isAdmin && status
+    == .completed`); count surfaces on `TaskCardView`.
+- **Required-photo flag** — `tasks.requires_photo BOOLEAN NOT NULL
+  DEFAULT false`. When true, `TaskCompletionSheet`'s Complete button
+  is disabled until a photo is attached. Cuts fake completions
+  immediately.
+- **Optional leaderboard** in Admin → Overview (off by default; per-
+  venue toggle in `venue_settings.show_leaderboard BOOLEAN`).
+
+Frame the score as celebratory, not punitive. Visible to the user
+about themselves; only admins see the cross-staff comparison view.
+Don't ship raw rankings ("Alice is #3 of 5") — show percentile
+buckets ("top 25%") so a score dip doesn't humiliate.
+
+### Phase 2 — Multi-tenant + portable profile (only after Phase 1 has real engagement)
+
+Real venue separation. Big rewrite (~2-3 weeks of focused work);
+should not start without Phase 1 traction.
+
+- New tables: `venues`, `venue_memberships(user_id, venue_id, role,
+  joined_at, left_at)`. Existing single-venue rows seed the first
+  venue.
+- Decouple **user identity** (portable) from **staff record**
+  (per-venue). Today `staff.auth_user_id` mixes both. New shape:
+  `users(id, name, avatar_url, ...)` is the portable profile;
+  `venue_memberships` is the per-venue staff record (role, hire date,
+  active flag).
+- Reputation score follows the user across venues: aggregate inputs
+  scoped to the venues the user has worked at. The hiring pitch —
+  "Alice has a 95% on-time rate at three previous venues" — is what
+  earns this phase its weight.
+- Every existing query gets a `venue_id` filter. Every RLS policy
+  rewrites to scope by membership. ~15 tables touched. Do this with
+  a migration plan, not piecemeal.
+- iOS: a venue picker (top-level), per-venue tab structure within
+  Admin, profile screen shows aggregate score + per-venue breakdown.
+
+### Phase 3 — Adjacent domains (deferred — only if Phase 2 lands and we hear demand)
+
+"Restaurants, performers, regular users" was floated. Don't try to
+fit them into the bar/venue schema. If the demand is real, each
+domain gets its own data shape:
+- Restaurants share enough with bars to be a Phase 2 add-on.
+- Performers / DJs / singers are a different model (gigs +
+  portfolio, not shifts + tasks). Build it as a sibling app
+  reusing the user/profile/reputation table — not as a
+  bar-feature graft.
+- "Regular users" without a clear job to do are not a real audience;
+  ignore unless we discover one.
+
+### Cross-cutting design principle
+
+Reputation is the central piece across all phases. Two failure modes
+to watch:
+
+- **Surveillance vibe**: if scores are mandatory, public, and
+  ranked, workers resent it. Mitigation: percentile buckets not raw
+  ranks; admin-only cross-staff views; opt-in leaderboards.
+- **Vanity-metric drift**: if score moves on activity (comments,
+  photos) more than work, gaming becomes the game. Mitigation:
+  reputation inputs lean heavily on completion behaviors (timeliness,
+  photo proof, kudos), not engagement counters.
+
+Test framing with current Backdoor staff before building Phase 1 —
+specifically, ask whether they'd want to see a score on their own
+profile, and whether they'd be OK with admins seeing one on theirs.
+Resentment scales faster than features.
+
 ## View-model mutation policy (no post-write `fetchAll`)
 
 Every mutator on `AdminViewModel` / `VenueViewModel` / `TaskViewModel`
