@@ -85,19 +85,7 @@ struct FolderTasksView: View {
                 }
             }
             if !editMode.isEditing {
-                Button {
-                    showingNew = true
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.title2.bold())
-                        .foregroundColor(.black)
-                        .frame(width: 56, height: 56)
-                        .background(Color.bdAccent)
-                        .clipShape(Circle())
-                        .shadow(color: .black.opacity(0.3), radius: 8, y: 4)
-                }
-                .padding(.trailing, 20)
-                .padding(.bottom, 24)
+                FloatingAddButton { showingNew = true }
             }
 
             if let template = pendingUndo {
@@ -332,26 +320,32 @@ struct FolderTasksView: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
-                    recurrencePill(.all,       label: tr("history_range_all"))
-                    recurrencePill(.recurring, label: tr("recurring"))
-                    recurrencePill(.oneOff,    label: tr("filter_one_off"))
+                    FilterPill(label: tr("history_range_all"),
+                               isSelected: recurrenceFilter == .all) {
+                        recurrenceFilter = .all
+                    }
+                    FilterPill(label: tr("recurring"),
+                               isSelected: recurrenceFilter == .recurring) {
+                        recurrenceFilter = .recurring
+                    }
+                    FilterPill(label: tr("filter_one_off"),
+                               isSelected: recurrenceFilter == .oneOff) {
+                        recurrenceFilter = .oneOff
+                    }
                 }
             }
 
             HStack(spacing: 8) {
-                Button {
-                    showingCategoryPicker = true
-                } label: {
-                    filterPill(label: tr("tasks_filter_category"),
-                               value: categoryFilter.map { CategoryDisplay.localized($0, in: adminVM.categories) } ?? tr("history_range_all"))
-                }.buttonStyle(.plain)
-
-                Button {
-                    showingAssigneePicker = true
-                } label: {
-                    filterPill(label: tr("tasks_filter_assignee"),
-                               value: assigneeSummary)
-                }.buttonStyle(.plain)
+                LabeledFilterPill(
+                    label: tr("tasks_filter_category"),
+                    value: categoryFilter.map {
+                        CategoryDisplay.localized($0, in: adminVM.categories)
+                    } ?? tr("history_range_all")
+                ) { showingCategoryPicker = true }
+                LabeledFilterPill(
+                    label: tr("tasks_filter_assignee"),
+                    value: assigneeSummary
+                ) { showingAssigneePicker = true }
 
                 Spacer()
                 if adminVM.isLoading { ProgressView().scaleEffect(0.75) }
@@ -369,31 +363,6 @@ struct FolderTasksView: View {
                 .foregroundColor(.bdAccent)
             }
         }
-    }
-
-    private func recurrencePill(_ value: TasksRecurrenceFilter, label: String) -> some View {
-        Button(label) { recurrenceFilter = value }
-            .font(.caption.weight(recurrenceFilter == value ? .semibold : .regular))
-            .foregroundColor(recurrenceFilter == value ? .black : .gray)
-            .padding(.horizontal, 12).padding(.vertical, 6)
-            .background(recurrenceFilter == value ? Color.bdAccent : Color.bgElevated)
-            .clipShape(Capsule())
-    }
-
-    private func filterPill(label: String, value: String) -> some View {
-        HStack(spacing: 4) {
-            Text(label).font(.caption2).foregroundColor(.gray)
-            Text(value)
-                .font(.caption.weight(.medium))
-                .foregroundColor(.white)
-                .lineLimit(1)
-            Image(systemName: "chevron.down")
-                .font(.system(size: 9))
-                .foregroundColor(.gray)
-        }
-        .padding(.horizontal, 10).padding(.vertical, 6)
-        .background(Color.bgElevated)
-        .clipShape(Capsule())
     }
 
     // MARK: - Tasks list
@@ -423,6 +392,15 @@ struct FolderTasksView: View {
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
                     .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                    // Drag the row out of this folder. Drop targets:
+                    // any folder row at the root, or another folder
+                    // when sibling folders ever get inline dropzones.
+                    // For now, dragging here is most useful when the
+                    // admin wants to flick a task back to Unfiled —
+                    // but the root folder list isn't visible from
+                    // here, so this mostly mirrors the move-via-menu
+                    // flow. Kept for symmetry with the root view.
+                    .draggable(task.id.uuidString)
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         Button(role: .destructive) {
                             Task { try? await adminVM.deleteTask(task) }

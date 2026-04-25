@@ -32,17 +32,7 @@ struct CategoriesAdminView: View {
             }
 
             if !editMode.isEditing {
-                Button { showingNew = true } label: {
-                    Image(systemName: "plus")
-                        .font(.title2.bold())
-                        .foregroundColor(.black)
-                        .frame(width: 56, height: 56)
-                        .background(Color.bdAccent)
-                        .clipShape(Circle())
-                        .shadow(color: .black.opacity(0.3), radius: 8, y: 4)
-                }
-                .padding(.trailing, 20)
-                .padding(.bottom, 24)
+                FloatingAddButton { showingNew = true }
             }
         }
         .sheet(isPresented: $showingNew) {

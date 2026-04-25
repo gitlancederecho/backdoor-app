@@ -227,39 +227,39 @@ struct StaffAdminView: View {
             // Role pills
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
-                    rolePill(.all,       label: tr("role_all"))
-                    rolePill(.admins,    label: tr("role_admins"))
-                    rolePill(.staffOnly, label: tr("role_staff_only"))
+                    FilterPill(label: tr("role_all"),
+                               isSelected: roleFilter == .all) {
+                        roleFilter = .all
+                    }
+                    FilterPill(label: tr("role_admins"),
+                               isSelected: roleFilter == .admins) {
+                        roleFilter = .admins
+                    }
+                    FilterPill(label: tr("role_staff_only"),
+                               isSelected: roleFilter == .staffOnly) {
+                        roleFilter = .staffOnly
+                    }
                 }
             }
 
             // Status pills
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
-                    statusPill(.all,      label: tr("status_all"))
-                    statusPill(.active,   label: tr("status_active"))
-                    statusPill(.inactive, label: tr("status_inactive"))
+                    FilterPill(label: tr("status_all"),
+                               isSelected: statusFilter == .all) {
+                        statusFilter = .all
+                    }
+                    FilterPill(label: tr("status_active"),
+                               isSelected: statusFilter == .active) {
+                        statusFilter = .active
+                    }
+                    FilterPill(label: tr("status_inactive"),
+                               isSelected: statusFilter == .inactive) {
+                        statusFilter = .inactive
+                    }
                 }
             }
         }
-    }
-
-    private func rolePill(_ value: StaffRoleFilter, label: String) -> some View {
-        Button(label) { roleFilter = value }
-            .font(.caption.weight(roleFilter == value ? .semibold : .regular))
-            .foregroundColor(roleFilter == value ? .black : .gray)
-            .padding(.horizontal, 12).padding(.vertical, 6)
-            .background(roleFilter == value ? Color.bdAccent : Color.bgElevated)
-            .clipShape(Capsule())
-    }
-
-    private func statusPill(_ value: StaffStatusFilter, label: String) -> some View {
-        Button(label) { statusFilter = value }
-            .font(.caption.weight(statusFilter == value ? .semibold : .regular))
-            .foregroundColor(statusFilter == value ? .black : .gray)
-            .padding(.horizontal, 12).padding(.vertical, 6)
-            .background(statusFilter == value ? Color.bdAccent : Color.bgElevated)
-            .clipShape(Capsule())
     }
 }
 

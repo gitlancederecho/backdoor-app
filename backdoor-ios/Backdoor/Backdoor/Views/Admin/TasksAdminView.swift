@@ -118,7 +118,7 @@ struct TasksAdminView: View {
             }
 
             if !editMode.isEditing {
-                Menu {
+                FloatingAddButton(menu: {
                     Button {
                         showingNew = true
                     } label: {
@@ -129,17 +129,7 @@ struct TasksAdminView: View {
                     } label: {
                         Label(tr("new_folder"), systemImage: "folder.badge.plus")
                     }
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.title2.bold())
-                        .foregroundColor(.black)
-                        .frame(width: 56, height: 56)
-                        .background(Color.bdAccent)
-                        .clipShape(Circle())
-                        .shadow(color: .black.opacity(0.3), radius: 8, y: 4)
-                }
-                .padding(.trailing, 20)
-                .padding(.bottom, 24)
+                })
             }
 
             if let template = pendingUndo {
@@ -259,7 +249,7 @@ struct TasksAdminView: View {
                         Task { await adminVM.persistFolderOrder() }
                     }
                 } header: {
-                    sectionHeader(tr("folders"))
+                    SectionHeader(text: tr("folders"))
                 }
             }
 
@@ -279,6 +269,11 @@ struct TasksAdminView: View {
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
                         .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                        // Drag-to-folder. Payload is the task's UUID
+                        // string; folder rows above are the drop
+                        // targets. Disabled in edit mode (List owns
+                        // the gesture for selection / .onMove there).
+                        .draggable(task.id.uuidString)
                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                             Button(role: .destructive) { handleDelete(task) } label: {
                                 Label(tr("delete"), systemImage: "trash")
@@ -295,7 +290,7 @@ struct TasksAdminView: View {
                         Task { await adminVM.persistTaskOrder(slice) }
                     }
                 } header: {
-                    sectionHeader(tr("unfiled"))
+                    SectionHeader(text: tr("unfiled"))
                 }
             }
 
@@ -317,16 +312,6 @@ struct TasksAdminView: View {
         .scrollContentBackground(.hidden)
         .background(Color.bgPrimary)
         .environment(\.editMode, $editMode)
-    }
-
-    @ViewBuilder
-    private func sectionHeader(_ text: String) -> some View {
-        Text(text.uppercased())
-            .font(.caption.weight(.semibold))
-            .foregroundColor(.gray)
-            .tracking(1.2)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 6)
     }
 
     @ViewBuilder
@@ -359,6 +344,19 @@ struct TasksAdminView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        // Drop destination for task rows being dragged in. Payload
+        // is the task's UUID-string; resolve back to the template
+        // and route it through `moveTask`.
+        .dropDestination(for: String.self) { items, _ in
+            for raw in items {
+                guard let uuid = UUID(uuidString: raw),
+                      let task = adminVM.taskTemplates.first(where: { $0.id == uuid }) else {
+                    continue
+                }
+                Task { try? await adminVM.moveTask(task, toFolder: folder.id) }
+            }
+            return !items.isEmpty
+        }
     }
 
     private var bulkActionBar: some View {
@@ -455,16 +453,33 @@ struct TasksAdminView: View {
             // Recurrence pills
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
-                    recurrencePill(.all,       label: tr("history_range_all"))
-                    recurrencePill(.recurring, label: tr("recurring"))
-                    recurrencePill(.oneOff,    label: tr("filter_one_off"))
+                    FilterPill(label: tr("history_range_all"),
+                               isSelected: recurrenceFilter == .all) {
+                        recurrenceFilter = .all
+                    }
+                    FilterPill(label: tr("recurring"),
+                               isSelected: recurrenceFilter == .recurring) {
+                        recurrenceFilter = .recurring
+                    }
+                    FilterPill(label: tr("filter_one_off"),
+                               isSelected: recurrenceFilter == .oneOff) {
+                        recurrenceFilter = .oneOff
+                    }
                 }
             }
 
             // Category + assignee menus on one row; edit toggle pinned right.
             HStack(spacing: 8) {
-                categoryMenu
-                assigneeMenu
+                LabeledFilterPill(
+                    label: tr("tasks_filter_category"),
+                    value: categoryFilter.map {
+                        CategoryDisplay.localized($0, in: adminVM.categories)
+                    } ?? tr("history_range_all")
+                ) { showingCategoryPicker = true }
+                LabeledFilterPill(
+                    label: tr("tasks_filter_assignee"),
+                    value: assigneeSummary
+                ) { showingAssigneePicker = true }
                 Spacer()
                 if adminVM.isLoading { ProgressView().scaleEffect(0.75) }
                 Menu {
@@ -493,35 +508,6 @@ struct TasksAdminView: View {
                 .foregroundColor(.bdAccent)
             }
         }
-    }
-
-    private func recurrencePill(_ value: TasksRecurrenceFilter, label: String) -> some View {
-        Button(label) { recurrenceFilter = value }
-            .font(.caption.weight(recurrenceFilter == value ? .semibold : .regular))
-            .foregroundColor(recurrenceFilter == value ? .black : .gray)
-            .padding(.horizontal, 12).padding(.vertical, 6)
-            .background(recurrenceFilter == value ? Color.bdAccent : Color.bgElevated)
-            .clipShape(Capsule())
-    }
-
-    private var categoryMenu: some View {
-        Button {
-            showingCategoryPicker = true
-        } label: {
-            filterPill(label: tr("tasks_filter_category"),
-                       value: categoryFilter.map { CategoryDisplay.localized($0, in: adminVM.categories) } ?? tr("history_range_all"))
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var assigneeMenu: some View {
-        Button {
-            showingAssigneePicker = true
-        } label: {
-            filterPill(label: tr("tasks_filter_assignee"),
-                       value: assigneeSummary)
-        }
-        .buttonStyle(.plain)
     }
 
     // MARK: - Picker rows
@@ -572,21 +558,6 @@ struct TasksAdminView: View {
         }
     }
 
-    private func filterPill(label: String, value: String) -> some View {
-        HStack(spacing: 4) {
-            Text(label).font(.caption2).foregroundColor(.gray)
-            Text(value)
-                .font(.caption.weight(.medium))
-                .foregroundColor(.white)
-                .lineLimit(1)
-            Image(systemName: "chevron.down")
-                .font(.system(size: 9))
-                .foregroundColor(.gray)
-        }
-        .padding(.horizontal, 10).padding(.vertical, 6)
-        .background(Color.bgElevated)
-        .clipShape(Capsule())
-    }
 }
 
 /// Shared row used by both `TasksAdminView` (at the Unfiled section)

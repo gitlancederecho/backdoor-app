@@ -105,12 +105,10 @@ struct HistoryAdminView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     ForEach(HistoryDateRange.allCases) { r in
-                        Button(rangeLabel(r)) { vm.dateRange = r }
-                            .font(.caption.weight(vm.dateRange == r ? .semibold : .regular))
-                            .foregroundColor(vm.dateRange == r ? .black : .gray)
-                            .padding(.horizontal, 12).padding(.vertical, 6)
-                            .background(vm.dateRange == r ? Color.bdAccent : Color.bgElevated)
-                            .clipShape(Capsule())
+                        FilterPill(label: rangeLabel(r),
+                                   isSelected: vm.dateRange == r) {
+                            vm.dateRange = r
+                        }
                     }
                 }
             }
@@ -146,7 +144,9 @@ struct HistoryAdminView: View {
                 }
             }
         } label: {
-            filterPill(
+            // Menu owns the tap; use the decorative variant so we
+            // don't nest a Button inside the Menu's label.
+            LabeledFilterPillLabel(
                 label: tr("history_filter_events"),
                 value: eventTypesSummary
             )
@@ -154,31 +154,10 @@ struct HistoryAdminView: View {
     }
 
     private var actorMenu: some View {
-        Button {
-            showingActorPicker = true
-        } label: {
-            filterPill(
-                label: tr("history_filter_actor"),
-                value: actorSummary
-            )
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func filterPill(label: String, value: String) -> some View {
-        HStack(spacing: 4) {
-            Text(label).font(.caption2).foregroundColor(.gray)
-            Text(value)
-                .font(.caption.weight(.medium))
-                .foregroundColor(.white)
-                .lineLimit(1)
-            Image(systemName: "chevron.down")
-                .font(.system(size: 9))
-                .foregroundColor(.gray)
-        }
-        .padding(.horizontal, 10).padding(.vertical, 6)
-        .background(Color.bgElevated)
-        .clipShape(Capsule())
+        LabeledFilterPill(
+            label: tr("history_filter_actor"),
+            value: actorSummary
+        ) { showingActorPicker = true }
     }
 
     private var eventTypesSummary: String {
